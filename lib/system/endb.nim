@@ -102,7 +102,7 @@ proc listBreakPoints() =
       write(stdout, abs(b.high))
     write(stdout, " ")
     write(stdout, b.filename)
-    if b.isActive:
+    if not b.isActive:
       write(stdout, " [disabled]\n")
     else:
       write(stdout, "\n")
