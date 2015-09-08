@@ -213,33 +213,33 @@ proc dbgHelp() =
   debugOut("""
 list of commands (see the manual for further help):
               GENERAL
-h, help                 display this help message
-q, quit                 quit the debugger and the program
-<ENTER>                 repeat the previous debugger command
+h, help                     display this help message
+q, quit                     quit the debugger and the program
+<ENTER>                     repeat the previous debugger command
               EXECUTING
-s, step                 single step, stepping into routine calls
-n, next                 single step, without stepping into routine calls
-f, skipcurrent          continue execution until the current routine finishes
-c, continue, r, run     continue execution until the next breakpoint
-i, ignore               continue execution, ignore all breakpoints
+s, step                     single step, stepping into routine calls
+n, next                     single step, without stepping into routine calls
+f, skipcurrent              continue execution until the current routine finishes
+c, continue, r, run         continue execution until the next breakpoint
+i, ignore                   continue execution, ignore all breakpoints
               BREAKPOINTS
 b, break [fromline [toline]] [file]
-                        set a new breakpoint for line and file
-                        if line or file are omitted the current one is used
-breakpoints             display the entire breakpoint list
-toggle fromline [file]  enable or disable a breakpoint
-filenames               list all valid filenames
+                            set a new breakpoint for line and file
+                            if line or file are omitted the current one is used
+bp, breakpoints             display the entire breakpoint list
+t, toggle fromline [file]   enable or disable a breakpoint
+fn, filenames               list all valid filenames
               DATA DISPLAY
-e, eval <expr>          evaluate the expression <expr>
-o, out <file> <expr>    evaluate <expr> and write it to <file>
-w, where                display the current execution point
-stackframe [file]       display current stack frame [and write it to file]
-u, up                   go up in the call stack
-d, down                 go down in the call stack
-bt, backtrace           display the entire call stack
-l, locals               display available local variables
-g, globals              display available global variables
-maxdisplay <integer>    set the display's recursion maximum
+e, eval <expr>              evaluate the expression <expr>
+o, out <file> <expr>        evaluate <expr> and write it to <file>
+w, where                    display the current execution point
+sf, stackframe [file]       display current stack frame [and write it to file]
+u, up                       go up in the call stack
+d, down                     go down in the call stack
+bt, backtrace               display the entire call stack
+l, locals                   display available local variables
+g, globals                  display available global variables
+md, maxdisplay <integer>    set the display's recursion maximum
 """)
 
 proc invalidCommand() =
@@ -405,7 +405,7 @@ proc commandPrompt() =
       dbgSkipToFrame = prevSkipFrame
     elif ?"o" or ?"out":
       dbgOut(dbgUser.data, i, dbgFramePtr)
-    elif ?"stackframe":
+    elif ?"sf" or ?"stackframe":
       dbgStackFrame(dbgUser.data, i, dbgFramePtr)
     elif ?"w" or ?"where":
       dbgShowExecutionPoint()
@@ -445,13 +445,13 @@ proc commandPrompt() =
       dbgWriteStackTrace(framePtr)
     elif ?"b" or ?"break":
       createBreakPoint(dbgUser.data, i)
-    elif ?"breakpoints":
+    elif ?"bp" or ?"breakpoints":
       listBreakPoints()
-    elif ?"toggle":
+    elif ?"t" or ?"toggle":
       breakpointToggle(dbgUser.data, i)
-    elif ?"filenames":
+    elif ?"fn" or ?"filenames":
       listFilenames()
-    elif ?"maxdisplay":
+    elif ?"md" or ?"maxdisplay":
       var parsed: int
       i = scanNumber(dbgUser.data, parsed, i)
       if dbgUser.data[i-1] in {'0'..'9'}:
