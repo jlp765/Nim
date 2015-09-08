@@ -35,6 +35,13 @@ type
     dbSkipCurrent,
     dbQuiting,    # debugger wants to quit
     dbBreakpoints # debugger is only interested in breakpoints
+
+  SourceStr = object
+    len: int
+    lineNr: int
+    startPos, endPos: int
+    data: array[0..10_000, char]
+
 {.deprecated: [TStaticStr: StaticStr, TBreakpointFilename: BreakpointFilename,
               TDbgState: DbgState].}
 
@@ -48,6 +55,10 @@ var
   maxDisplayRecDepth: int = 5 # do not display too much data!
 
   brkPoints: array[0..127, BreakpointFilename]
+
+  sourceFileName: StaticStr   # current source file
+  sourceFileData: SourceStr   # data for displaying current source file line
+  stepIntoSystem = false      # show system code else next line in source file
 
 proc setLen(s: var StaticStr, newLen=0) =
   s.len = newLen
