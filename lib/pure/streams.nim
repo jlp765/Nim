@@ -27,9 +27,10 @@
 ##  ss.close()
 ##
 ##  var fs = newFileStream("somefile.txt", fmRead)
-##  while fs.readLine(line):
-##    echo line
-##  fs.close()
+##  if not isNil(fs):
+##    while fs.readLine(line):
+##      echo line
+##    fs.close()
 
 include "system/inclrtl"
 
