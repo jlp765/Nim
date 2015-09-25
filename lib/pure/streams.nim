@@ -393,8 +393,13 @@ when not defined(js):
     ## creates a new stream from the file named `filename` with the mode `mode`.
     ## If the file cannot be opened, nil is returned. See the `system
     ## <system.html>`_ module for a list of available FileMode enums.
+    ##
+    ## An `[IOError]` is raised when unable to open the file.
     var f: File
     if open(f, filename, mode): result = newFileStream(f)
+    else:
+      if mode == fmWrite: raise newEIO("cannot create new file stream " & filename)
+      else: raise newEIO("cannot open file stream " & filename)
 
 
 when true:
