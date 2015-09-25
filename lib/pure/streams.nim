@@ -11,6 +11,25 @@
 ## the `FileStream` and the `StringStream` which implement the stream
 ## interface for Nim file objects (`File`) and strings. Other modules
 ## may provide other implementations for this standard stream interface.
+##
+## Examples:
+##
+## .. code-block:: Nim
+##
+##  import streams
+##  var
+##    ss = newStringStream("""The first line
+##  the second line
+##  the third line""")
+##    line = ""
+##  while ss.readLine(line):
+##    echo line
+##  ss.close()
+##
+##  var fs = newFileStream("somefile.txt", fmRead)
+##  while fs.readLine(line):
+##    echo line
+##  fs.close()
 
 include "system/inclrtl"
 
