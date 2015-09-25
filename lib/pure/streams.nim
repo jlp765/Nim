@@ -390,13 +390,14 @@ when not defined(js):
     result.writeDataImpl = fsWriteData
     result.flushImpl = fsFlush
 
-  proc newFileStream*(filename: string, mode: FileMode): FileStream =
+  proc newFileStream*(filename: string, mode: FileMode = fmRead): FileStream =
     ## creates a new stream from the file named `filename` with the mode `mode`.
     ## If the file cannot be opened, nil is returned. See the `system
     ## <system.html>`_ module for a list of available FileMode enums.
+    ##
+    ## If no mode is supplied, then open `filename` for reading.
     var f: File
     if open(f, filename, mode): result = newFileStream(f)
-
 
 when true:
   discard
