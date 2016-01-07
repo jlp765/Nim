@@ -1,5 +1,4 @@
 discard """
-  file: "twrongexc.nim"
   outputsub: "Error: unhandled exception:  [ValueError]"
   exitcode: "1"
 """
