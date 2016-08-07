@@ -12,100 +12,99 @@ Reading Text from a File
   
 
 .. code-block:: nim
-  
+
   import strutils, times, os, parsecsv, streams, memfiles
-  
-  let
-    fname = "junkdata.txt"  
 
   const
-    FGETSZ = 2500    
-    
+    fgetSz = 2500
+    fname = "junkdata.txt"
+
   var
     t0, t1 = cpuTime()
-    F: File
+    f: File
     line = ""
     cntL = 0
     cntC = 0
-  
-  var fgetStr: cstring = newString(FGETSZ+1)
-  
+    fgetStr: cstring = newString(fgetSz+1)
+
+  # WARNING: shouldn't really call this c library function, but use the Nim system procs,
+  # because the Nim procs do extra code saftey checks
+  #
   proc fgets(c: cstring, n: cint, f: File): cstring  {.importc: "fgets", header: "<stdio.h>".}
-  
+
   iterator fgetsLine(f: File): string =
-    while not isNil(fgets(fgetStr, FGETSZ, f)):
+    while not isNil(fgets(fgetStr, fgetSz, f)):
       yield $fgetStr
-  
+
   proc fgetsAll(f: File): string =
     result = ""
     for x in f.fgetsLine():
       result.add(x)
-    
-  proc prepare() =
+
+  template prepare(): untyped =
     t0 = cpuTime()
     cntL = 0
     cntC = 0
-    
-  proc finalise(msg: string) =
+
+  template finalise(msg: static[string]): untyped =
     t1 = cpuTime()
     let s = (msg & repeat(' ',25))[0..25]
     echo s,($(t1-t0) & "00")[0..4], "  Lines: ", cntL, " chars: ",cntC
-  
+
   # -- MAIN ---
   proc main() =
     # Check file exists
-    if not open(F, fname):
-      echo "Unable to find ", fname
-      quit()
-    close(F)
-  
+    if not open(f, fname):
+      quit("Unable to find " & fname)
+    close(f)
+
     # using fgets() from stdlib of C  (reading all file data into a single string)
     #
     # This is slower than the next fgets() example because of string handling
     #
     prepare()
-    if open(F, fname):
-      let s = F.fgetsAll
+    if open(f, fname):
+      let s = f.fgetsAll
       cntL = s.countLines
-      cntC = s.len
-      close(F)
+      cntC = s.len - cntL   # exclude line termination
+      close(f)
     finalise("fgets all: ")
-      
+
     # using fgets() from stdlib of C
-    # 
+    #
     # This shows how to make C library calls
     # Safety-wise, it is best to use Nim's system lib procs
     #
     prepare()
-    if open(F, fname):
-      for s in F.fgetsLine:
+    if open(f, fname):
+      for s in f.fgetsLine:
         inc cntL
         cntC += s.len - 1   # exclude nl char
-      close(F)
+      close(f)
     finalise("fgets iterator: ")
-    
+
     # Reading line-by-line using the readLine() iterator from the Nim system lib
     #
     # Compare this readLine() with the iterator lines()
     #
     prepare()
-    if open(F, fname):
-      while F.readLine(line):
+    if open(f, fname):
+      while f.readLine(line):
         inc cntL
         cntC += line.len
-      close(F)
+      close(f)
     finalise("readLine: ")
-  
+
     # using the lines() iterator from the Nim system lib
     #
     prepare()
-    if open(F, fname):
-      for line in F.lines:
+    if open(f, fname):
+      for line in f.lines:
         inc cntL
         cntC += line.len
-      close(F)
+      close(f)
     finalise("lines: ")
-  
+
     # using the Nim parseCsv lib
     #
     # If you needed to manipulate string portions of each line, 
@@ -114,17 +113,17 @@ Reading Text from a File
     # by delimeter (if required)
     #
     prepare()
-    var s = newFileStream(fname, fmRead)
-    if s != nil: 
-      var x: CsvParser
-      open(x, s, fname)
-      while x.readRow():
+    var strm = newfileStream(fname, fmRead)
+    if strm != nil:
+      var cp: CsvParser
+      open(cp, strm, fname)
+      while cp.readRow():
         inc cntL
-        for z in x.row:
+        for z in cp.row:
           cntC += z.len
-      close(x)
+      close(cp)
     finalise("parsecsv: ")
-  
+
     # using readAll() and splitLines() from Nim system lib
     #
     # This would not be appropriate for large files due to
@@ -132,15 +131,15 @@ Reading Text from a File
     # but for small files works well
     #
     prepare()
-    if open(F, fname):
-      let x = F.readAll
+    if open(f, fname):
+      let x = f.readAll
       for line in x.splitLines:
         inc cntL
         cntC += line.len
-      close(F)
+      close(f)
       dec cntL
     finalise("readAll splitLines: ")
-    
+
     # using readAll() and splitLines() from Nim system lib
     #
     # This is a minor improvement on string handling compared
@@ -148,14 +147,14 @@ Reading Text from a File
     # full text from the file)
     #
     prepare()
-    if open(F, fname):
-      for line in F.readAll().splitLines:
+    if open(f, fname):
+      for line in f.readAll().splitLines:
         inc cntL
         cntC += line.len
-      close(F)
+      close(f)
       dec cntL
     finalise("readAll().splitLines: ")
-    
+
     # using readAll() and countLines() from Nim system and strutils lib
     #
     # This avoids manipulating the file on a per-line basis
@@ -164,13 +163,13 @@ Reading Text from a File
     # you optimise your code for a specific situation
     #
     prepare()
-    if open(F, fname):
-      let x = F.readAll
+    if open(f, fname):
+      let x = f.readAll
       cntL = x.countLines
-      cntC = x.len() - (cntL * "\n".len)
-      close(F)
+      cntC = x.len() - cntL   # exclude line termination
+      close(f)
     finalise("readAll countlines: ")
-  
+
     # using memfiles() and lines() from the Nim memfiles lib
     #
     # This is faster because the file is read into a buffer in chunks
@@ -182,6 +181,5 @@ Reading Text from a File
       cntC += line.len
     close(file)
     finalise("memfiles lines: ")
-      
+
   main()
-  
