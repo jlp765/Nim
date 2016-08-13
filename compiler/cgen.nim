@@ -191,6 +191,20 @@ proc freshLineInfo(p: BProc; info: TLineInfo): bool =
     p.lastLineInfo.fileIndex = info.fileIndex
     result = true
 
+
+proc fixQuotes(cs: Rope): Rope =
+  var
+    prevC: char = '\0'
+    s = ""
+  for c in cs:
+    if c == '"':  # and prevC != '\\':
+      s.add('\\')
+    if c == '\\':
+      s.add('\\')
+    s.add(c)
+    prevC = c
+  result = rope(s)
+
 proc genLineDir(p: BProc, t: PNode) =
   var line = t.info.safeLineNm
   if optEmbedOrigSrc in gGlobalOptions:
@@ -199,8 +213,8 @@ proc genLineDir(p: BProc, t: PNode) =
   if ({optStackTrace, optEndb} * p.options == {optStackTrace, optEndb}) and
       (p.prc == nil or sfPure notin p.prc.flags):
     if freshLineInfo(p, t.info):
-      linefmt(p, cpsStmts, "#endb($1, $2);$n",
-              line.rope, makeCString(toFilename(t.info)))
+      linefmt(p, cpsStmts, "#endb($1, $2, \"$3\");$n",
+              line.rope, makeCString(toFilename(t.info)), fixQuotes(sourceLine(t.info)))
   elif ({optLineTrace, optStackTrace} * p.options ==
       {optLineTrace, optStackTrace}) and
       (p.prc == nil or sfPure notin p.prc.flags) and t.info.fileIndex >= 0:

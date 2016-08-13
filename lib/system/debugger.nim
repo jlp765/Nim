@@ -28,6 +28,7 @@ type
 var
   dbgGlobalData: ExtendedFrame  # this reserves much space, but
                                 # for now it is the most practical way
+  srcLine*: cstring   ## the line from the source code
 
 proc dbgRegisterGlobal(name: cstring, address: pointer,
                        typ: PNimType) {.compilerproc.} =
@@ -53,6 +54,10 @@ proc getGlobal*(slot: int): VarSlot {.inline.} =
   ## retrieves the meta data for the global variable at `slot`. CAUTION: An
   ## invalid `slot` value causes a corruption!
   result = dbgGlobalData.slots[slot]
+
+proc getSourceLine*(): cstring {.inline.} =
+  ## retrieves the current line of source code
+  result = srcLine
 
 # ------------------- breakpoint support ------------------------------------
 
@@ -294,12 +299,13 @@ proc checkWatchpoints =
       dbgWatchpointHook(watchPoints[i].name)
       watchPoints[i].oldValue = newHash
 
-proc endb(line: int, file: cstring) {.compilerproc, noinline.} =
+proc endb(line: int, file: cstring, code: cstring) {.compilerproc, noinline.} =
   # This proc is called before every Nim code line!
   if framePtr == nil: return
   if dbgWatchpointHook != nil: checkWatchpoints()
   framePtr.line = line # this is done here for smaller code size!
   framePtr.filename = file
+  srcLine = code
   if dbgLineHook != nil: dbgLineHook()
 
 include "system/endb"
