@@ -56,8 +56,6 @@ var
 
   #brkPoints: array[0..DbgLen, BreakpointFilename]
 
-  sourceFile: SourceStr       # source file text read into a buffer
-
 # ------------------- StaticStr support ------------------------------------
 
 proc setLen(s: var StaticStr, newLen=0) =
