@@ -462,6 +462,12 @@ proc assignGlobalVar(p: BProc, s: PSym) =
           "#dbgRegisterGlobal($1, &$2, $3);$n",
          [makeCString(normalize(s.owner.name.s & '.' & s.name.s)),
           s.loc.r, genTypeInfo(p.module, s.typ)])
+  elif p.options * {optStackTrace, optEndb} ==
+                               {optStackTrace, optEndb}:
+    appcg(p.module, p.module.s[cfsDebugInit],
+          "#dbgRegisterGlobal($1, &$2, $3);$n",
+         [makeCString(normalize(s.owner.name.s & '.' & s.name.s)),
+          s.loc.r, genTypeInfo(p.module, s.typ)])
 
 proc assignParam(p: BProc, s: PSym) =
   assert(s.loc.r != nil)
