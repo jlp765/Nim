@@ -457,12 +457,8 @@ proc assignGlobalVar(p: BProc, s: PSym) =
     # fixes tests/run/tzeroarray:
     resetLoc(p, s.loc)
   if p.module.module.options * {optStackTrace, optEndb} ==
-                               {optStackTrace, optEndb}:
-    appcg(p.module, p.module.s[cfsDebugInit],
-          "#dbgRegisterGlobal($1, &$2, $3);$n",
-         [makeCString(normalize(s.owner.name.s & '.' & s.name.s)),
-          s.loc.r, genTypeInfo(p.module, s.typ)])
-  elif p.options * {optStackTrace, optEndb} ==
+                               {optStackTrace, optEndb} or
+     p.options * {optStackTrace, optEndb} ==
                                {optStackTrace, optEndb}:
     appcg(p.module, p.module.s[cfsDebugInit],
           "#dbgRegisterGlobal($1, &$2, $3);$n",
