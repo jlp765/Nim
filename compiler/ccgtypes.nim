@@ -1027,8 +1027,14 @@ proc genTypeInfo(m: BModule, t: PType): Rope =
     # reference the type info as extern here
     discard cgsym(m, "TNimType")
     discard cgsym(m, "TNimNode")
+    #if (m.module.options * {optEndb} == {optEndb}):
     addf(m.s[cfsVars], "extern TNimType $1; /* $2 */$n",
          [result, rope(typeToString(t))])
+    addf(m.s[cfsVars], "dbgRegisterType(\"$1\", \"$2\", \"$3\");$n",
+         [result, rope(typeToString(t)), getTypeName(t)])
+    #else:
+    #addf(m.s[cfsVars], "extern TNimType $1; /* $2 */$n",
+    #     [result, rope(typeToString(t))])
     return "(&".rope & result & ")".rope
   case t.kind
   of tyEmpty, tyVoid: result = rope"0"

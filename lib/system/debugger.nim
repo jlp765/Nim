@@ -23,11 +23,24 @@ type
                            # except for the global data description.
     f: TFrame
     slots: array[0..10_000, VarSlot]
+
+  TypSlot = object
+    name: cstring       ## unique name
+    typeName: cstring   ## type name  (eg "var int")
+    nType: cstring      ## type Nim node
+    #nType: PNimType    ## type Nim node
+
+  TypFrame = object
+    len: int
+    typs: array[0..10_000, TypSlot]
+
 {.deprecated: [TVarSlot: VarSlot, TExtendedFrame: ExtendedFrame].}
 
 var
   dbgGlobalData: ExtendedFrame  # this reserves much space, but
                                 # for now it is the most practical way
+
+  dbgTypeData: TypFrame  # each unique variable has a type defined
 
 proc dbgRegisterGlobal(name: cstring, address: pointer,
                        typ: PNimType) {.compilerproc.} =
@@ -39,6 +52,17 @@ proc dbgRegisterGlobal(name: cstring, address: pointer,
   dbgGlobalData.slots[i].typ = typ
   dbgGlobalData.slots[i].address = address
   inc(dbgGlobalData.f.len)
+
+proc dbgRegisterType(name, typName: cstring,
+                     typ: cstring) {.compilerproc.} =
+  let i = dbgTypeData.len
+  if i >= high(dbgTypeData.typs):
+    #debugOut("[Warning] cannot register variable ")
+    return
+  dbgTypeData.typs[i].name = name
+  dbgTypeData.typs[i].typeName = typName
+  dbgTypeData.typs[i].nType = typ
+  inc(dbgTypeData.len)
 
 proc getLocal*(frame: PFrame; slot: int): VarSlot {.inline.} =
   ## retrieves the meta data for the local variable at `slot`. CAUTION: An
