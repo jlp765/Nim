@@ -13,6 +13,9 @@
 
 import debuginfo
 
+var
+  gEndbTypeDefs: Rope  # the generator inserts these into main proc
+  
 proc isKeyword(w: PIdent): bool =
   # Nim and C++ share some keywords
   # it's more efficient to test the whole Nim keywords range
@@ -1027,14 +1030,10 @@ proc genTypeInfo(m: BModule, t: PType): Rope =
     # reference the type info as extern here
     discard cgsym(m, "TNimType")
     discard cgsym(m, "TNimNode")
-    #if (m.module.options * {optEndb} == {optEndb}):
     addf(m.s[cfsVars], "extern TNimType $1; /* $2 */$n",
          [result, rope(typeToString(t))])
-    addf(m.s[cfsVars], "dbgRegisterType(\"$1\", \"$2\", \"$3\");$n",
-         [result, rope(typeToString(t)), getTypeName(t)])
-    #else:
-    #addf(m.s[cfsVars], "extern TNimType $1; /* $2 */$n",
-    #     [result, rope(typeToString(t))])
+    addf(gEndbTypeDefs, "\tdbgRegisterType(\"$4.$1\", \"$2\", \"$4.$3\");$n",
+          [result, rope(typeToString(t)), getTypeName(t), rope(splitFile(m.filename).name)])
     return "(&".rope & result & ")".rope
   case t.kind
   of tyEmpty, tyVoid: result = rope"0"
@@ -1069,6 +1068,8 @@ proc genTypeInfo(m: BModule, t: PType): Rope =
     genDeepCopyProc(m, t.deepCopy, result)
   elif origType.deepCopy != nil:
     genDeepCopyProc(m, origType.deepCopy, result)
+  addf(gEndbTypeDefs, "\tdbgRegisterType(\"$4.$1\", \"$2\", \"$4.$3\");$n",
+        [result, rope(typeToString(t)), getTypeName(t), rope(splitFile(m.filename).name)])
   result = "(&".rope & result & ")".rope
 
 proc genTypeSection(m: BModule, n: PNode) =

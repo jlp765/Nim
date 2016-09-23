@@ -306,6 +306,20 @@ proc getCurrentFileNameNoExt(): cstring =
 
 proc dbgRepr(p: pointer, typ: PNimType): string       # fwd decl
 
+proc getVarType(name: cstring): cstring =
+  result = "unknown".cstring
+  for i in 0.. <getVarTypeLen():
+    let vt = getVarType(i)
+    if vt.varName == name:
+      return vt.typeName
+  print("MisMatch: ")
+  printLn(name)
+
+proc addrIndirect(p: pointer): pointer {.inline.} =
+  # return the addr pointed to by p as a pointer
+  # eg, to convert a "var int" to 
+  result = cast[pointer]( addr(cast[ptr int](p)[]) )
+
 proc reprNimType(typ: PNimType): string =
   case typ.kind
     of tySet: result = "set"
@@ -343,7 +357,14 @@ proc reprNimType(typ: PNimType): string =
     else: result = "unknown"
 
 proc writeVariable(stream: File, slot: VarSlot) =
-  writeLine(stream, $slot.name & ": " & reprNimType(slot.typ) & " = " & dbgRepr(slot.address, slot.typ))
+  #writeLine(stream, $slot.name & ": " & reprNimType(slot.typ) & " = " & dbgRepr(slot.address, slot.typ))
+  writeLine(stream, $slot.name & ": " & $getVarType(slot.name) & " = " & dbgRepr(slot.address, slot.typ))
+
+proc listVariables(stream: File) =
+  writeLine(stream, "Variables (" & $getVarTypeLen() & " slots):")
+  for i in 0.. <getVarTypeLen():
+    writeLine(stream, $getVarType(i).varName & ": " & $getVarType(i).typeName & " (" & $getVarType(i).name & ")")
+  printLnDone(stream)
 
 proc listFrame(stream: File, f: PFrame) =
   #printBeg(stream)
@@ -744,6 +765,16 @@ proc commandPrompt() =
         prevSkipFrame = dbgSkipToFrame
         s = srcCodeLine
       listGlobals(stdout)
+      dbgState = prevState
+      dbgSkipToFrame = prevSkipFrame
+      srcCodeLine.assign(s)
+    of ?"v", ?"variables":
+      var
+        prevState = dbgState
+        prevSkipFrame = dbgSkipToFrame
+        s = srcCodeLine
+      dbgState = dbSkipCurrent
+      listVariables(stdout)
       dbgState = prevState
       dbgSkipToFrame = prevSkipFrame
       srcCodeLine.assign(s)

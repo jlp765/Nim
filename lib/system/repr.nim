@@ -42,12 +42,21 @@ proc reprStrAux(result: var string, s: string) =
   if cast[pointer](s) == nil:
     add result, "nil"
     return
+  when defined(endb):
+    add result, "nil"
+    #try:
+    if s != nil:
+      result = ""
+    #except: 
+    #  discard
+    if result.len > 0: return
   add result, reprPointer(cast[pointer](s)) & "\""
   for i in 0.. <s.len:
-    if s[i] == '\0':
-      result.setlen(0)
-      add result, "nil"
-      return            # for endb uninitialised string (if found null char, then nil string)
+    when defined(endb):
+      if s[i] == '\0':
+        result.setlen(0)
+        add result, "nil"
+        return            # for endb uninitialised string (if found null char, then nil string)
     let c = s[i]
     case c
     of '"': add result, "\\\""

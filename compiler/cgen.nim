@@ -395,6 +395,11 @@ proc localDebugInfo(p: BProc, s: PSym) =
        "FR.s[$1].address = (void*)$3; FR.s[$1].typ = $4; FR.s[$1].name = $2;$n",
        [p.maxFrameLen.rope, makeCString(normalize(s.name.s)), a,
         genTypeInfo(p.module, s.loc.t)])
+  # tStr is to remove leading "(&" and trailing ")" from genTypInfo() result
+  var tStr = $genTypeInfo(p.module, s.loc.t)
+  lineF(p, cpsInit,
+       "dbgRegisterVariable(\"$3.$1\", \"$3.$2\");$n",
+       [rope(tStr[2.. tStr.len-2]), rope(s.name.s), rope(splitFile(p.module.filename).name)])  # typeName, varName
   inc(p.maxFrameLen)
   inc p.blocks[p.blocks.len-1].frameLen
 
@@ -462,7 +467,7 @@ proc assignGlobalVar(p: BProc, s: PSym) =
                                {optStackTrace, optEndb}:
     appcg(p.module, p.module.s[cfsDebugInit],
           "#dbgRegisterGlobal($1, &$2, $3);$n",
-         [makeCString(normalize(s.owner.name.s & '.' & s.name.s)),
+         [makeCString(s.owner.name.s & '.' & s.name.s),
           s.loc.r, genTypeInfo(p.module, s.typ)])
 
 proc assignParam(p: BProc, s: PSym) =
@@ -863,7 +868,11 @@ proc genFilenames(m: BModule): Rope =
   discard cgsym(m, "dbgRegisterFilename")
   result = nil
   for i in 0.. <fileInfos.len:
-    result.addf("dbgRegisterFilename($1);$N", [fileInfos[i].projPath.makeCString])
+    result.addf("\tdbgRegisterFilename($1);$N", [fileInfos[i].projPath.makeCString])
+
+proc genDebugTypes(m: BModule): Rope =
+  discard cgsym(m, "dbgRegisterType")
+  result = gEndbTypeDefs   # already assembled in ccgtypes
 
 proc genMainProc(m: BModule) =
   const
@@ -967,6 +976,8 @@ proc genMainProc(m: BModule) =
   if gBreakpoints != nil: discard cgsym(m, "dbgRegisterBreakpoint")
   if optEndb in gOptions:
     gBreakpoints.add(m.genFilenames)
+    gBreakpoints.add(m.genDebugTypes)
+    discard cgsym(m, "dbgRegisterVariable")
 
   let initStackBottomCall =
     if platform.targetOS == osStandalone or gSelectedGC == gcNone: "".rope

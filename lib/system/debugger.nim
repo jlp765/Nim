@@ -25,10 +25,9 @@ type
     slots: array[0..10_000, VarSlot]
 
   TypSlot = object
-    name: cstring       ## unique name
+    name: cstring       ## unique Nim name (eg, "NTI104")
     typeName: cstring   ## type name  (eg "var int")
-    nType: cstring      ## type Nim node
-    #nType: PNimType    ## type Nim node
+    varName: cstring    ## variable name 
 
   TypFrame = object
     len: int
@@ -42,6 +41,8 @@ var
 
   dbgTypeData: TypFrame  # each unique variable has a type defined
 
+#----------- Compiler procs ------------------------------
+  
 proc dbgRegisterGlobal(name: cstring, address: pointer,
                        typ: PNimType) {.compilerproc.} =
   let i = dbgGlobalData.f.len
@@ -59,10 +60,37 @@ proc dbgRegisterType(name, typName: cstring,
   if i >= high(dbgTypeData.typs):
     #debugOut("[Warning] cannot register variable ")
     return
+  # check not already in the list
+  for j in 0.. <(i-1):
+    if c_strcmp(dbgTypeData.typs[j].name, name) == 0:
+      # update the actual type name
+      dbgTypeData.typs[i].typeName = typName
+      return
+  # new entry
   dbgTypeData.typs[i].name = name
   dbgTypeData.typs[i].typeName = typName
-  dbgTypeData.typs[i].nType = typ
+  dbgTypeData.typs[i].varName = typ
   inc(dbgTypeData.len)
+
+proc dbgRegisterVariable(typName, varName: cstring) {.compilerproc.} =
+  # dbgRegisterVariable will have been called during itialisation
+  # to register all the variables,
+  # now add the variable to the associated unique type
+  for i in 0.. <dbgTypeData.len:
+    if c_strcmp(dbgTypeData.typs[i].name, typName) == 0:
+      # update variable name
+      dbgTypeData.typs[i].varName = varName
+      return
+  # new entry
+  let j = dbgTypeData.len
+  if j >= high(dbgTypeData.typs):
+    return
+  dbgTypeData.typs[j].name = typName
+  dbgTypeData.typs[j].typeName = typName
+  dbgTypeData.typs[j].varName = varName
+  inc(dbgTypeData.len)
+
+#------------------- retrieval of slot data -----------------------------
 
 proc getLocal*(frame: PFrame; slot: int): VarSlot {.inline.} =
   ## retrieves the meta data for the local variable at `slot`. CAUTION: An
@@ -77,6 +105,15 @@ proc getGlobal*(slot: int): VarSlot {.inline.} =
   ## retrieves the meta data for the global variable at `slot`. CAUTION: An
   ## invalid `slot` value causes a corruption!
   result = dbgGlobalData.slots[slot]
+
+proc getVarTypeLen*(): int {.inline.} =
+  ## gets the number of registered variables (and their type).
+  result = dbgTypeData.len
+
+proc getVarType*(tSlot: int): TypSlot {.inline.} =
+  ## retrieves the meta data for the variable Types at `slot`. CAUTION: An
+  ## invalid `slot` value causes a corruption!
+  result = dbgTypeData.typs[tSlot]
 
 # ------------------- breakpoint support ------------------------------------
 
