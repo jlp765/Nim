@@ -43,6 +43,12 @@ type
     dbQuiting,      # debugger wants to quit
     dbBreakpoints   # debugger is only interested in breakpoints
 
+  VarLocationObj = tuple[procVarName: StaticStr, lineNr: int]
+
+  VarsInitObj = object
+    filename: StaticStr
+    vars: seq[VarLocationObj]
+
 {.deprecated: [TStaticStr: StaticStr, TBreakpointFilename: BreakpointFilename,
               TDbgState: DbgState].}
 
@@ -58,6 +64,7 @@ var
 
   #brkPoints: array[0..DbgLen, BreakpointFilename]
   srcCodeLine: StaticStr
+  varsInitData: VarsInitObj
 
 #-------------------- Support procs ----------------------------------------
 
@@ -84,6 +91,9 @@ proc add(s: var StaticStr, c: cstring) =
   while c[i] != '\0':
     add s, c[i]
     inc i
+
+proc add(s: var StaticStr, ss: StaticStr) {.inline.} =
+  s.add(ss.data)
 
 proc assign(s: var StaticStr, c: cstring) =
   setLen(s)
@@ -225,6 +235,10 @@ proc scanWord(src: cstring, a: var StaticStr, start: int): int =
   setlen(a)
   result = scanAndAppendWord(src, a, start)
 
+proc scanWord(src: StaticStr, a: var StaticStr, start: int): int =
+  setlen(a)
+  result = scanAndAppendWord(src.data, a, start)
+
 proc scanAndAppendNonWord(src: cstring, a: var StaticStr, start: int): int =
   var inQuote = false
   result = start
@@ -302,6 +316,63 @@ proc getCurrentFileNameNoExt(): cstring =
     t.add(c)
   result = t.data.cstring
 
+template addProcVarLoc(procName, varName, loc: untyped): typed =
+  var ss: StaticStr
+  ss.assign(procName)
+  ss.add(".")
+  ss.add(varName)
+  let vlo: VarLocationObj = (procVarName: ss, lineNr: loc)
+  varsInitData.vars.add( vlo )
+
+proc getVarsInitInfo() =
+  # populate the data if not exists or not match current file
+  var
+    line: StaticStr
+    procName: StaticStr
+    tokn: StaticStr
+    sPos = 0
+    lineNr = 0
+    indent = 0
+  if varsInitData.filename != framePtr.filename:
+    varsInitData.filename.assign(framePtr.filename)
+    var f: File = open($(framePtr.filename), fmRead)
+    discard f.readLine(line)
+    inc lineNr
+    while not f.endOfFile():
+      sPos = scanWord(line, tokn, 0)
+      if indent > 0:
+        # expect token to start at indent when getting vars
+        if sPos == indent:
+          # get a variable
+          addProcVarLoc(procName, tokn, lineNr)
+          continue
+        else:
+          # not a variable, so return to normal mode (continue on below)
+          indent = 0
+      if tokn == "proc":
+        inc(sPos, 4)   # skip space
+        sPos = line.scanWord(procName, sPos)
+      elif tokn == "template":
+        inc(sPos, 8)
+        sPos = line.scanWord(procName, sPos)
+      elif tokn == "var" or tokn == "let":
+        inc(sPos, 3)
+        sPos = line.scanWord(tokn, sPos)
+        if tokn.len == 0 or tokn == "#":    # indented (multi?) vars
+          var indent = 0
+          if not f.readLine(line): break
+          inc lineNr
+          indent = line.scanWord(tokn, 0)
+          sPos = indent
+          addProcVarLoc(procName, tokn, lineNr)
+        else:                     # on same line, single variable
+          addProcVarLoc(procName, tokn, lineNr)
+      elif tokn == "const":
+        discard
+      if not f.readLine(line): break
+      inc lineNr
+    f.close()
+
 #----------------------- top level actions --------------------------
 
 proc dbgRepr(p: pointer, typ: PNimType): string       # fwd decl
@@ -317,7 +388,7 @@ proc getVarType(name: cstring): cstring =
 
 proc addrIndirect(p: pointer): pointer {.inline.} =
   # return the addr pointed to by p as a pointer
-  # eg, to convert a "var int" to 
+  # eg, to convert a "var int" to
   result = cast[pointer]( addr(cast[ptr int](p)[]) )
 
 proc reprNimType(typ: PNimType): string =
@@ -473,6 +544,7 @@ proc dbgShowCurrentProc(dbgFramePointer: PFrame) =
     printLnEnd()
 
 proc dbgShowExecutionPoint() {.noinline.} =
+  getVarsInitInfo()
   # don't combine these print statements
   printBeg()
   print(framePtr.filename)
@@ -884,5 +956,7 @@ proc initDebugger {.inline.} =
   dbgState = dbStepInto
   dbgUser.len = 1
   dbgUser.data[0] = 's'
+  varsInitData.filename.assign("")
+  varsInitData.vars = @[]
   dbgWatchpointHook = watchpointHookImpl
   dbgLineHook = lineHookImpl
