@@ -197,6 +197,19 @@ proc freshLineInfo(p: BProc; info: TLineInfo): bool =
     p.lastLineInfo.fileIndex = info.fileIndex
     result = true
 
+proc fixQuotes(cs: Rope): Rope =
+  var
+    prevC: char = '\0'
+    s = ""
+  for c in cs:
+    if c == '"':  # and prevC != '\\':
+      s.add('\\')
+    if c == '\\':
+      s.add('\\')
+    s.add(c)
+    prevC = c
+  result = rope(s)
+
 proc genLineDir(p: BProc, t: PNode) =
   var tt = t
   #while tt.kind in {nkStmtListExpr}+nkCallKinds:
@@ -210,9 +223,9 @@ proc genLineDir(p: BProc, t: PNode) =
   genCLineDir(p.s(cpsStmts), tt.info.toFullPath, line)
   if ({optStackTrace, optEndb} * p.options == {optStackTrace, optEndb}) and
       (p.prc == nil or sfPure notin p.prc.flags):
-    if freshLineInfo(p, tt.info):
-      linefmt(p, cpsStmts, "#endb($1, $2);$n",
-              line.rope, makeCString(toFilename(tt.info)))
+    if freshLineInfo(p, t.info):
+      linefmt(p, cpsStmts, "#endb($1, $2, \"$3\");$n",
+              line.rope, makeCString(toFilename(tt.info)), fixQuotes(sourceLine(tt.info)))
   elif ({optLineTrace, optStackTrace} * p.options ==
       {optLineTrace, optStackTrace}) and
       (p.prc == nil or sfPure notin p.prc.flags) and tt.info.fileIndex >= 0:
@@ -363,8 +376,20 @@ proc localDebugInfo(p: BProc, s: PSym) =
   if s.kind == skParam and ccgIntroducedPtr(s): a = s.loc.r
   lineF(p, cpsInit,
        "FR_.s[$1].address = (void*)$3; FR_.s[$1].typ = $4; FR_.s[$1].name = $2;$n",
-       [p.maxFrameLen.rope, makeCString(normalize(s.name.s)), a,
+       [p.maxFrameLen.rope, makeCString(normalize($s.loc.r)), a,
         genTypeInfo(p.module, s.loc.t)])
+       # [p.maxFrameLen.rope, makeCString(normalize(s.name.s)), a,
+  # tStr is to remove leading "(&" and trailing ")" from genTypInfo() result
+  var tStr = $genTypeInfo(p.module, s.loc.t)
+  let line = s.info.safeLineNm
+  # lineNr, "filename.nim", "typeStr", "filename.varname", address, type
+  #lineF(p, cpsInit,
+  linefmt(p, cpsStmts,
+       "#dbgRegisterVariable($1, \"$2$5\", \"$3\", \"$2.$4\", $6, $7, \"$8\");$n",
+       [line.rope, rope(splitFile(toFilename(s.info)).name), rope(tStr[2.. tStr.len-2]),
+       rope($s.name.s.mangle),
+        rope(splitFile(toFilename(s.info)).ext),
+        a, rope(tStr), gEndbTypeDefs.getOrDefault(tStr[2.. tStr.len-2]) ])
   inc(p.maxFrameLen)
   inc p.blocks[p.blocks.len-1].frameLen
 
@@ -427,11 +452,17 @@ proc assignGlobalVar(p: BProc, s: PSym) =
     # fixes tests/run/tzeroarray:
     resetLoc(p, s.loc)
   if p.module.module.options * {optStackTrace, optEndb} ==
+                               {optStackTrace, optEndb} or
+     p.options * {optStackTrace, optEndb} ==
                                {optStackTrace, optEndb}:
+    let line = s.info.safeLineNm
+    let typStr = $genTypeInfo(p.module, s.typ)
     appcg(p.module, p.module.s[cfsDebugInit],
-          "#dbgRegisterGlobal($1, &$2, $3);$n",
-         [makeCString(normalize(s.owner.name.s & '.' & s.name.s)),
-          s.loc.r, genTypeInfo(p.module, s.typ)])
+          "#dbgRegisterGlobal($1, $2, &$3, $4, \"$5\");$n",
+         [line.rope,
+          makeCString(s.owner.name.s & '.' & s.name.s),
+          s.loc.r, rope(typStr),
+          gEndbTypeDefs.getOrDefault(typStr[2 .. typStr.len-2]) ])
 
 proc assignParam(p: BProc, s: PSym) =
   assert(s.loc.r != nil)
@@ -880,8 +911,7 @@ proc genFilenames(m: BModule): Rope =
   discard cgsym(m, "dbgRegisterFilename")
   result = nil
   for i in 0.. <fileInfos.len:
-    result.addf("dbgRegisterFilename($1);$N", [fileInfos[i].projPath.makeCString])
-
+    result.addf("\tdbgRegisterFilename($1);$N", [fileInfos[i].projPath.makeCString])
 proc genMainProc(m: BModule) =
   const
     # The use of a volatile function pointer to call Pre/NimMainInner
@@ -987,6 +1017,7 @@ proc genMainProc(m: BModule) =
   if m.g.breakpoints != nil: discard cgsym(m, "dbgRegisterBreakpoint")
   if optEndb in gOptions:
     m.g.breakpoints.add(m.genFilenames)
+    #discard cgsym(m, "dbgRegisterVariable")
 
   let initStackBottomCall =
     if platform.targetOS == osStandalone or gSelectedGC == gcNone: "".rope

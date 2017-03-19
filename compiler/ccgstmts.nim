@@ -1050,9 +1050,12 @@ proc genWatchpoint(p: BProc, n: PNode) =
   var a: TLoc
   initLocExpr(p, n.sons[1], a)
   let typ = skipTypes(n.sons[1].typ, abstractVarRange)
-  lineCg(p, cpsStmts, "#dbgRegisterWatchpoint($1, (NCSTRING)$2, $3);$n",
-        [a.addrLoc, makeCString(renderTree(n.sons[1])),
-        genTypeInfo(p.module, typ)])
+  let tinfo = $genTypeInfo(p.module, typ)
+  lineCg(p, cpsStmts, "#dbgRegisterWatchpoint($1, (NCSTRING)\"$4.$2\", $3, \"$5\", $6, \"$7\");$n",
+        [a.addrLoc, rope(renderTree(n.sons[1])),
+        rope(tinfo), rope(splitFile(toFilename(n.info)).name),
+        rope(tinfo[2.. tinfo.len-2]), rope(toLinenumber(n.info)),
+        gEndbTypeDefs.getOrDefault(tinfo[2.. tinfo.len-2])])
 
 proc genPragma(p: BProc, n: PNode) =
   for i in countup(0, sonsLen(n) - 1):

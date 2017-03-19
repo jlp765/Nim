@@ -13,6 +13,9 @@
 
 import sighashes
 
+var
+  gEndbTypeDefs = initTable[cstring, Rope]()   # the nim type text, "int", "string", ...
+
 proc isKeyword(w: PIdent): bool =
   # Nim and C++ share some keywords
   # it's more efficient to test the whole Nim keywords range
@@ -1094,6 +1097,7 @@ proc genTypeInfo(m: BModule, t: PType): Rope =
 
   let sig = hashType(origType)
   result = m.typeInfoMarker.getOrDefault(sig)
+  gEndbTypeDefs[$result] = rope(typeToString(origType))
   if result != nil:
     return "(&".rope & result & ")".rope
 
@@ -1104,6 +1108,7 @@ proc genTypeInfo(m: BModule, t: PType): Rope =
     addf(m.s[cfsVars], "extern TNimType $1;$n", [result])
     # also store in local type section:
     m.typeInfoMarker[sig] = result
+    gEndbTypeDefs[$result] = rope(typeToString(origType))
     return "(&".rope & result & ")".rope
 
   result = "NTI$1_" % [rope($sig)]
@@ -1116,13 +1121,16 @@ proc genTypeInfo(m: BModule, t: PType): Rope =
     # reference the type info as extern here
     discard cgsym(m, "TNimType")
     discard cgsym(m, "TNimNode")
-    addf(m.s[cfsVars], "extern TNimType $1;$n", [result])
+    addf(m.s[cfsVars], "extern TNimType $1; /* $2 */$n",
+         [result, rope(typeToString(t))])
+    gEndbTypeDefs[$result] = rope(typeToString(origType))
     return "(&".rope & result & ")".rope
 
   m.g.typeInfoMarker[sig] = result
   case t.kind
   of tyEmpty, tyVoid: result = rope"0"
-  of tyPointer, tyBool, tyChar, tyCString, tyString, tyInt..tyUInt64, tyVar:
+  #of tyPointer, tyBool, tyChar, tyCString, tyString, tyInt..tyUInt64, tyVar:
+  of tyPointer, tyBool, tyChar, tyCString, tyString, tyInt..tyUInt64:
     genTypeInfoAuxBase(m, t, t, result, rope"0")
   of tyStatic:
     if t.n != nil: result = genTypeInfo(m, lastSon t)
@@ -1138,7 +1146,7 @@ proc genTypeInfo(m: BModule, t: PType): Rope =
     if gSelectedGC >= gcMarkAndSweep:
       let markerProc = genTraverseProc(m, origType, sig, tiNew)
       addf(m.s[cfsTypeInit3], "$1.marker = $2;$n", [result, markerProc])
-  of tyPtr, tyRange: genTypeInfoAux(m, t, t, result)
+  of tyPtr, tyRange, tyVar: genTypeInfoAux(m, t, t, result)
   of tyArray: genArrayInfo(m, t, result)
   of tySet: genSetInfo(m, t, result)
   of tyEnum: genEnumInfo(m, t, result)
@@ -1154,6 +1162,7 @@ proc genTypeInfo(m: BModule, t: PType): Rope =
     genDeepCopyProc(m, t.deepCopy, result)
   elif origType.deepCopy != nil:
     genDeepCopyProc(m, origType.deepCopy, result)
+  gEndbTypeDefs[$result] = rope(typeToString(origType))
   result = "(&".rope & result & ")".rope
 
 proc genTypeSection(m: BModule, n: PNode) =

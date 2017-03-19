@@ -42,8 +42,17 @@ proc reprStrAux(result: var string, s: cstring; len: int) =
   if cast[pointer](s) == nil:
     add result, "nil"
     return
+  when defined(endb):
+    if cast[int](cast[pointer](s)) == 0:
+      add result, "nil"
+      return
   add result, reprPointer(cast[pointer](s)) & "\""
-  for i in 0.. <len:
+  for i in 0.. <s.len:
+    when defined(endb):
+      if s[i] == '\0':
+        result.setlen(0)
+        add result, "nil"
+        return            # for endb uninitialised string (if found null char, then nil string)
     let c = s[i]
     case c
     of '"': add result, "\\\""
@@ -85,7 +94,6 @@ proc reprEnum(e: int, typ: PNimType): string {.compilerRtl.} =
     for i in 0 .. n.len-1:
       if s[i].offset == e:
         return $s[i].name
-
   result = $e & " (invalid data!)"
 
 type
@@ -186,36 +194,43 @@ when not defined(useNimRtl):
     add result, "]"
 
   proc reprRecordAux(result: var string, p: pointer, n: ptr TNimNode,
-                     cl: var ReprClosure) {.benign.} =
+                     cl: var ReprClosure) =
+    var res = ""
     case n.kind
     of nkNone: sysAssert(false, "reprRecordAux")
     of nkSlot:
-      add result, $n.name
+      add result, n.name
       add result, " = "
-      reprAux(result, cast[pointer](cast[ByteAddress](p) + n.offset), n.typ, cl)
+      reprAux(res, cast[pointer](cast[ByteAddress](p) + n.offset), n.typ, cl)
+      add result, res
     of nkList:
       for i in 0..n.len-1:
         if i > 0: add result, ",\n"
         reprRecordAux(result, p, n.sons[i], cl)
     of nkCase:
       var m = selectBranch(p, n)
-      reprAux(result, cast[pointer](cast[ByteAddress](p) + n.offset), n.typ, cl)
+      reprAux(res, cast[pointer](cast[ByteAddress](p) + n.offset), n.typ, cl)
+      add result, res
       if m != nil: reprRecordAux(result, p, m, cl)
+    else: discard
 
   proc reprRecord(result: var string, p: pointer, typ: PNimType,
                   cl: var ReprClosure) =
     add result, "["
-    var curTyp = typ
-    var first = true
-    while curTyp != nil:
-      var part = ""
+    var
+      curTyp = typ
+      first = true
+      part = ""
+    while curTyp != nil and curTyp.node != nil:
       reprRecordAux(part, p, curTyp.node, cl)
       if part.len > 0:
         if not first:
           add result, ",\n"
         add result, part
         first = false
-      curTyp = curTyp.base
+      if curTyp.base != nil:
+        curTyp = curTyp.base
+      else: break
     add result, "]"
 
   proc reprRef(result: var string, p: pointer, typ: PNimType,
@@ -227,7 +242,7 @@ when not defined(useNimRtl):
       else:
         var cell = usrToCell(p)
       add result, "ref " & reprPointer(p)
-      if cell notin cl.marked:
+      if cell notin cl.marked and not isNil(typ.base):
         # only the address is shown:
         incl(cl.marked, cell)
         add result, " --> "
@@ -254,9 +269,20 @@ when not defined(useNimRtl):
     of tyObject:
       var t = cast[ptr PNimType](p)[]
       reprRecord(result, p, t, cl)
+    of tyVar:
+      if cast[int](cast[PPointer](p)[]) == 0: add result, "nil"
+      else:
+        # C++ uses referenced pointers, C uses pointers to pointers ???
+        when defined(cpp):
+          if (typ.base.kind ==  tyArray):
+            reprAux(result, cast[PPointer](p)[], typ.base, cl)
+          else:
+            reprAux(result, cast[pointer](p), typ.base, cl)
+        else:
+          reprAux(result, cast[PPointer](p)[], typ.base, cl)
     of tyRef, tyPtr:
       sysAssert(p != nil, "reprAux")
-      if cast[PPointer](p)[] == nil: add result, "nil"
+      if cast[int](cast[PPointer](p)[]) == 0: add result, "nil"
       else: reprRef(result, cast[PPointer](p)[], typ, cl)
     of tySequence:
       reprSequence(result, cast[PPointer](p)[], typ, cl)
@@ -278,18 +304,26 @@ when not defined(useNimRtl):
     of tyBool: add result, reprBool(cast[ptr bool](p)[])
     of tyChar: add result, reprChar(cast[ptr char](p)[])
     of tyString:
-      let sp = cast[ptr string](p)
-      reprStrAux(result, if sp[].isNil: nil else: sp[].cstring, sp[].len)
+      let ip = cast[ptr int](p)
+      if ip[] == 0: add result, "nil"
+      else:
+        var sp = cast[ptr string](p)[]
+        result = reprStr(sp)
+        #reprStr(result, cstring(sp), sp.len)
     of tyCString:
-      let cs = cast[ptr cstring](p)[]
-      if cs.isNil: add result, "nil"
-      else: reprStrAux(result, cs, cs.len)
+      let ip = cast[ptr int](p)
+      if ip[] == 0: add result, "nil"
+      else:
+        let cs = cast[ptr cstring](p)[]
+        if cs.isNil: add result, "nil"
+        else: reprStrAux(result, cs, cs.len)
     of tyRange: reprAux(result, p, typ.base, cl)
-    of tyProc, tyPointer:
+    #of tyProc, tyPointer:
+    else:
       if cast[PPointer](p)[] == nil: add result, "nil"
       else: add result, reprPointer(cast[PPointer](p)[])
-    else:
-      add result, "(invalid data!)"
+    #else:
+    #  add result, "(reprAux invalid data!)"
     inc(cl.recdepth)
 
 proc reprOpenArray(p: pointer, length: int, elemtyp: PNimType): string {.

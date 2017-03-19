@@ -540,6 +540,19 @@ proc hasFrameInfo(p: PProc): bool =
   ({optLineTrace, optStackTrace} * p.options == {optLineTrace, optStackTrace}) and
       ((p.prc == nil) or not (sfPure in p.prc.flags))
 
+proc fixQuotes(cs: Rope): Rope =
+  var
+    prevC: char = '\0'
+    s = ""
+  for c in cs:
+    if c == '"':  # and prevC != '\\':
+      s.add('\\')
+    if c == '\\':
+      s.add('\\')
+    s.add(c)
+    prevC = c
+  result = rope(s)
+
 proc genLineDir(p: PProc, n: PNode) =
   let line = toLinenumber(n.info)
   if optLineDir in p.options:
@@ -548,7 +561,8 @@ proc genLineDir(p: PProc, n: PNode) =
   if {optStackTrace, optEndb} * p.options == {optStackTrace, optEndb} and
       ((p.prc == nil) or sfPure notin p.prc.flags):
     useMagic(p, "endb")
-    addf(p.body, "endb($1);$n", [rope(line)])
+    addf(p.body, "endb($1, $2, \"$3\");$n", [rope(line),
+          makeCString(toFilename(n.info)), fixQuotes(sourceLine(n.info))])
   elif hasFrameInfo(p):
     addf(p.body, "F.line = $1;$n" | "$$F['line'] = $1;$n", [rope(line)])
 
