@@ -138,10 +138,10 @@ proc getEndingAfter(a, c: cstring): cstring =
     return a
 
 proc write(f: File, s: StaticStr) =
-  write(f, s.data.cstring)
+  write(f, $s.data)
 
 proc writeLine(f: File, s: StaticStr) =
-  writeLine(f, s.data.cstring)
+  writeLine(f, $s.data)
 
 proc write(f: File, p: varargs[cstring]) =
   for s in items(p):
@@ -183,7 +183,7 @@ proc readLine(f: File, line: var StaticStr): bool =
   result = true
 
 proc print(s: StaticStr) =
-  stdout.write(s.data.cstring)
+  stdout.write($s.data)
 proc print[T: string|cstring](s: T) =
   stdout.write(s)
 
@@ -399,15 +399,15 @@ proc getGenericTypeName(t: PNimType): cstring =
   of hash("var"):
     ss.assign("var ")
     ss.add(getGenericTypeName(t.base))
-    return ss.data.cstring
+    return $ss.data
   of hash("sequence"):    # composite types need to return the base type
     ss.assign(getGenericTypename(t.base))
-    return ss.data.cstring
+    return $ss.data
   of hash("array"):
     ss.assign(getGenericTypename(t.base))
-    return ss.data.cstring
+    return $ss.data
   else: discard
-  result = tname.data.cstring
+  result = $tname.data
 
 proc dbgVarOut(stream: File, filename: cstring, lineNr: int, varname, typeStr, valueStr: cstring) =
   # value can be nil, "", "<undefined>" or "<some value string>"
@@ -428,7 +428,7 @@ proc writeVariable(stream: File, fp: PFrame, slot: VarSlot) =
   var
     v: StaticStr
   v.assign($getEndingAfter(slot.name, "."))   # just the varname
-  dbgVarOut(stream, fp.filename, slot.lineNr, $v.data, $getGenericTypename(slot.typ), dbgRepr(slot.address, slot.typ).cstring)
+  dbgVarOut(stream, fp.filename, slot.lineNr, $v.data, $getGenericTypename(slot.typ), $dbgRepr(slot.address, slot.typ))
 
 proc listVariables(stream: File, fp: PFrame) =
   # output:   lineNr: varname: type
@@ -480,7 +480,7 @@ proc writeLocalImpl(stream: File, fp: PFrame, i: int) =
     dbgVarOut(stream, fp.filename, v.lineNr, $ss.data, $v.typeNameStr.data, "<undefined>")
   elif dbgExpand and (fp.line > v.lineNr):
     # var registered, and initialized
-    dbgVarOut(stream, fp.filename, v.lineNr, $ss.data, $v.typeNameStr.data, dbgRepr(v.address, v.typ).cstring)
+    dbgVarOut(stream, fp.filename, v.lineNr, $ss.data, $v.typeNameStr.data, $dbgRepr(v.address, v.typ))
   else:
     # don't expand the variable value (but variable has been registered)
     dbgVarOut(stream, fp.filename, v.lineNr, $ss.data, $v.typeNameStr.data, nil)
@@ -1083,7 +1083,7 @@ proc parseBreakpoint(fp: PFrame, s: cstring, start: int): Breakpoint =
   i = scanFilename(s, dbgTemp, i)
   if dbgTemp.len != 0:
     if not hasExt(dbgTemp.data): add(dbgTemp, ".nim")
-    result.filename = canonFilename(dbgTemp.data.cstring)
+    result.filename = canonFilename($dbgTemp.data)
     if result.filename.isNil:
       dbgMsgOut("[Warning] no breakpoint could be set; unknown filename ")
       return
