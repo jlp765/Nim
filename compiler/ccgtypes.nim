@@ -167,8 +167,11 @@ proc mapType(typ: PType): TCTypeKind =
   of tySet: result = mapSetType(typ)
   of tyOpenArray, tyArray, tyVarargs: result = ctArray
   of tyObject, tyTuple: result = ctStruct
+  of tyUserTypeClasses:
+    internalAssert typ.isResolvedUserTypeClass
+    return mapType(typ.lastSon)
   of tyGenericBody, tyGenericInst, tyGenericParam, tyDistinct, tyOrdinal,
-     tyTypeDesc, tyAlias:
+     tyTypeDesc, tyAlias, tyInferred:
     result = mapType(lastSon(typ))
   of tyEnum:
     if firstOrd(typ) < 0:
@@ -790,7 +793,8 @@ proc getTypeDescAux(m: BModule, origTyp: PType, check: var IntSet): Rope =
       of 1, 2, 4, 8: addf(m.s[cfsTypes], "typedef NU$2 $1;$n", [result, rope(s*8)])
       else: addf(m.s[cfsTypes], "typedef NU8 $1[$2];$n",
              [result, rope(getSize(t))])
-  of tyGenericInst, tyDistinct, tyOrdinal, tyTypeDesc, tyAlias:
+  of tyGenericInst, tyDistinct, tyOrdinal, tyTypeDesc, tyAlias,
+     tyUserTypeClass, tyUserTypeClassInst, tyInferred:
     result = getTypeDescAux(m, lastSon(t), check)
   else:
     internalError("getTypeDescAux(" & $t.kind & ')')
@@ -987,7 +991,7 @@ proc genObjectInfo(m: BModule, typ, origType: PType, name: Rope) =
   if typ.kind == tyObject: genTypeInfoAux(m, typ, origType, name)
   else: genTypeInfoAuxBase(m, typ, origType, name, rope("0"))
   var tmp = getNimNode(m)
-  if not isImportedCppType(typ):
+  if not isImportedType(typ):
     genObjectFields(m, typ, origType, typ.n, tmp)
   addf(m.s[cfsTypeInit3], "$1.node = &$2;$n", [name, tmp])
   var t = typ.sons[0]
@@ -1093,7 +1097,7 @@ proc genDeepCopyProc(m: BModule; s: PSym; result: Rope) =
 
 proc genTypeInfo(m: BModule, t: PType): Rope =
   let origType = t
-  var t = skipTypes(origType, irrelevantForBackend)
+  var t = skipTypes(origType, irrelevantForBackend + tyUserTypeClasses)
 
   let sig = hashType(origType)
   result = m.typeInfoMarker.getOrDefault(sig)
@@ -1135,6 +1139,9 @@ proc genTypeInfo(m: BModule, t: PType): Rope =
   of tyStatic:
     if t.n != nil: result = genTypeInfo(m, lastSon t)
     else: internalError("genTypeInfo(" & $t.kind & ')')
+  of tyUserTypeClasses:
+    internalAssert t.isResolvedUserTypeClass
+    return genTypeInfo(m, t.lastSon)
   of tyProc:
     if t.callConv != ccClosure:
       genTypeInfoAuxBase(m, t, t, result, rope"0")

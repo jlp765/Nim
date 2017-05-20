@@ -635,6 +635,7 @@ proc generateHeaders(m: BModule) =
     else:
       addf(m.s[cfsHeaders], "#include $1$N", [rope(it)])
   add(m.s[cfsHeaders], "#undef linux" & tnl)
+  add(m.s[cfsHeaders], "#undef near" & tnl)
 
 proc initFrame(p: BProc, procname, filename: Rope): Rope =
   discard cgsym(p.module, "nimFrame")
@@ -918,14 +919,14 @@ proc genMainProc(m: BModule) =
     # prevents inlining of the NimMainInner function and dependent
     # functions, which might otherwise merge their stack frames.
     PreMainBody =
-      "void PreMainInner() {$N" &
+      "void PreMainInner(void) {$N" &
       "\tsystemInit000();$N" &
       "$1" &
       "$2" &
       "$3" &
       "}$N$N" &
-      "void PreMain() {$N" &
-      "\tvoid (*volatile inner)();$N" &
+      "void PreMain(void) {$N" &
+      "\tvoid (*volatile inner)(void);$N" &
       "\tsystemDatInit000();$N" &
       "\tinner = PreMainInner;$N" &
       "$4$5" &
@@ -944,7 +945,7 @@ proc genMainProc(m: BModule) =
 
     NimMainProc =
       "N_CDECL(void, NimMain)(void) {$N" &
-        "\tvoid (*volatile inner)();$N" &
+        "\tvoid (*volatile inner)(void);$N" &
         "\tPreMain();$N" &
         "\tinner = NimMainInner;$N" &
         "$2" &
@@ -995,6 +996,19 @@ proc genMainProc(m: BModule) =
         MainProcs &
       "}$N$N"
 
+    GenodeNimMain =
+      "Libc::Env *genodeEnv;$N" &
+      NimMainBody
+
+    ComponentConstruct =
+      "void Libc::Component::construct(Libc::Env &env) {$N" &
+      "\tgenodeEnv = &env;$N" &
+      "\tLibc::with_libc([&] () {$n\t" &
+      MainProcs &
+      "\t});$N" &
+      "\tenv.parent().exit(0);$N" &
+      "}$N$N"
+
   var nimMain, otherMain: FormatStr
   if platform.targetOS == osWindows and
       gGlobalOptions * {optGenGuiApp, optGenDynLib} != {}:
@@ -1005,6 +1019,9 @@ proc genMainProc(m: BModule) =
       nimMain = WinNimDllMain
       otherMain = WinCDllMain
     m.includeHeader("<windows.h>")
+  elif platform.targetOS == osGenode:
+    nimMain = GenodeNimMain
+    otherMain = ComponentConstruct
   elif optGenDynLib in gGlobalOptions:
     nimMain = PosixNimDllMain
     otherMain = PosixCDllMain
@@ -1329,8 +1346,11 @@ proc shouldRecompile(code: Rope, cfile: Cfile): bool =
   if optForceFullMake notin gGlobalOptions:
     if not equalsFile(code, cfile.cname):
       if isDefined("nimdiff"):
-        copyFile(cfile.cname, cfile.cname & ".backup")
-        echo "diff ", cfile.cname, ".backup ", cfile.cname
+        if fileExists(cfile.cname):
+          copyFile(cfile.cname, cfile.cname & ".backup")
+          echo "diff ", cfile.cname, ".backup ", cfile.cname
+        else:
+          echo "new file ", cfile.cname
       writeRope(code, cfile.cname)
       return
     if existsFile(cfile.obj) and os.fileNewer(cfile.obj, cfile.cname):

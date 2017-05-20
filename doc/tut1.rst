@@ -407,7 +407,7 @@ or
     ...
 
 Other useful iterators for collections (like arrays and sequences) are
-* ``items`` and ``mitems``, which provides immutable and mutable elements respectively, and 
+* ``items`` and ``mitems``, which provides immutable and mutable elements respectively, and
 * ``pairs`` and ``mpairs`` which provides the element and an index number (immutable and mutable respectively)
 
 .. code-block:: nim
@@ -599,7 +599,7 @@ Result variable
 A procedure that returns a value has an implicit ``result`` variable declared
 that represents the return value. A ``return`` statement with no expression is a
 shorthand for ``return result``. The ``result`` value is always returned
-automatically at the end a procedure if there is no ``return`` statement at
+automatically at the end of a procedure if there is no ``return`` statement at
 the exit.
 
 .. code-block:: nim
@@ -1074,8 +1074,8 @@ at runtime by 0, the second by 1 and so on. For example:
     Direction = enum
       north, east, south, west
 
-  var x = south      # `x` is of type `Direction`; its value is `south`
-  echo x           # writes "south" to `stdout`
+  var x = south     # `x` is of type `Direction`; its value is `south`
+  echo x            # writes "south" to `stdout`
 
 All the comparison operators can be used with enumeration types.
 
@@ -1132,11 +1132,11 @@ A subrange type is a range of values from an integer or enumeration type
 
 .. code-block:: nim
   type
-    Subrange = range[0..5]
+    MySubrange = range[0..5]
 
 
-``Subrange`` is a subrange of ``int`` which can only hold the values 0
-to 5. Assigning any other value to a variable of type ``Subrange`` is a
+``MySubrange`` is a subrange of ``int`` which can only hold the values 0
+to 5. Assigning any other value to a variable of type ``MySubrange`` is a
 compile-time or runtime error. Assignments from the base type to one of its
 subrange types (and vice versa) are allowed.
 
@@ -1395,7 +1395,7 @@ their type, but it is the proc using the slice object which defines what values
 are accepted.
 
  To understand some of the different ways of specifying the indices of strings, arrays, sequences, etc.,
- it must be remembered that Nim uses zero-based indices.  
+ it must be remembered that Nim uses zero-based indices.
 
  So the string ``b`` is of length 19, and two different ways of specifying the indices are
 
@@ -1411,10 +1411,10 @@ are accepted.
  In the above example, because the string ends in a period, to get the portion of the string that is "useless" and replace it with "useful"
 
  ``b[11..^2]`` is the portion "useless", and
- ``b[11..^2] = "useful"`` replaces the "useless" portion with "useful", 
+ ``b[11..^2] = "useful"`` replaces the "useless" portion with "useful",
  giving the result "Slices are useful."
 
- Note: alternate ways of writing this are ``b[^8..^2] = "useful"`` or as ``b[11..b.len-2] = "useful"`` or as ``b[11..<b.len-1] = "useful"`` or as ``b[^8..^2] = "useful"`` or as ....
+ Note: alternate ways of writing this are ``b[^8..^2] = "useful"`` or as ``b[11..b.len-2] = "useful"`` or as ``b[11..<b.len-1] = "useful"`` or as ....
 
 Tuples
 ------

@@ -697,6 +697,17 @@ proc getLinkCmd(projectfile, objfiles: string): string =
         "nim", quoteShell(getPrefixDir()),
         "lib", quoteShell(libpath)])
 
+template tryExceptOSErrorMessage(errorPrefix: string = "", body: untyped): typed =
+  try:
+    body
+  except OSError:
+    let ose = (ref OSError)(getCurrentException())
+    if errorPrefix.len > 0:
+      rawMessage(errGenerated, errorPrefix & " " & ose.msg & " " & $ose.errorCode)
+    else:
+      rawMessage(errExecutionOfProgramFailed, ose.msg & " " & $ose.errorCode)
+    raise
+
 proc callCCompiler*(projectfile: string) =
   var
     linkCmd: string
@@ -721,17 +732,20 @@ proc callCCompiler*(projectfile: string) =
     var res = 0
     if gNumberOfProcessors <= 1:
       for i in countup(0, high(cmds)):
-        res = execWithEcho(cmds[i])
+        tryExceptOSErrorMessage("invocation of external compiler program failed."):
+          res = execWithEcho(cmds[i])
         if res != 0: rawMessage(errExecutionOfProgramFailed, cmds[i])
-    elif optListCmd in gGlobalOptions or gVerbosity > 1:
-      res = execProcesses(cmds, {poEchoCmd, poStdErrToStdOut, poUsePath, poParentStreams},
-                          gNumberOfProcessors, afterRunEvent=runCb)
-    elif gVerbosity == 1:
-      res = execProcesses(cmds, {poStdErrToStdOut, poUsePath, poParentStreams},
-                          gNumberOfProcessors, prettyCb, afterRunEvent=runCb)
     else:
-      res = execProcesses(cmds, {poStdErrToStdOut, poUsePath, poParentStreams},
-                          gNumberOfProcessors, afterRunEvent=runCb)
+      tryExceptOSErrorMessage("invocation of external compiler program failed."):
+        if optListCmd in gGlobalOptions or gVerbosity > 1:
+          res = execProcesses(cmds, {poEchoCmd, poStdErrToStdOut, poUsePath, poParentStreams},
+                              gNumberOfProcessors, afterRunEvent=runCb)
+        elif gVerbosity == 1:
+          res = execProcesses(cmds, {poStdErrToStdOut, poUsePath, poParentStreams},
+                              gNumberOfProcessors, prettyCb, afterRunEvent=runCb)
+        else:
+          res = execProcesses(cmds, {poStdErrToStdOut, poUsePath, poParentStreams},
+                              gNumberOfProcessors, afterRunEvent=runCb)
     if res != 0:
       if gNumberOfProcessors <= 1:
         rawMessage(errExecutionOfProgramFailed, cmds.join())
@@ -749,8 +763,9 @@ proc callCCompiler*(projectfile: string) =
 
     linkCmd = getLinkCmd(projectfile, objfiles)
     if optCompileOnly notin gGlobalOptions:
-      execExternalProgram(linkCmd,
-        if optListCmd in gGlobalOptions or gVerbosity > 1: hintExecuting else: hintLinking)
+      tryExceptOSErrorMessage("invocation of external linker program failed."):
+        execExternalProgram(linkCmd,
+          if optListCmd in gGlobalOptions or gVerbosity > 1: hintExecuting else: hintLinking)
   else:
     linkCmd = ""
   if optGenScript in gGlobalOptions:
@@ -785,14 +800,24 @@ proc writeJsonBuildInstructions*(projectfile: string) =
       else:
         lit "],\L"
 
-  proc linkfiles(f: File; buf, objfiles: var string; toLink: seq[string]) =
-    for i, it in toLink:
-      let objfile = addFileExt(it, CC[cCompiler].objExt)
-      str(objfile)
+  proc linkfiles(f: File; buf, objfiles: var string) =
+    for i, it in externalToLink:
+      let
+        objFile = if noAbsolutePaths(): it.extractFilename else: it
+        objStr = addFileExt(objFile, CC[cCompiler].objExt)
       add(objfiles, ' ')
-      add(objfiles, quoteShell(objfile))
-      
-      if i == toLink.high:
+      add(objfiles, objStr)
+      str objStr
+      if toCompile.len == 0 and i == externalToLink.high:
+        lit "\L"
+      else:
+        lit ",\L"
+    for i, x in toCompile:
+      let objStr = quoteShell(x.obj)
+      add(objfiles, ' ')
+      add(objfiles, objStr)
+      str objStr
+      if i == toCompile.high:
         lit "\L"
       else:
         lit ",\L"
@@ -809,7 +834,7 @@ proc writeJsonBuildInstructions*(projectfile: string) =
     lit "],\L\"link\":[\L"
     var objfiles = ""
     # XXX add every file here that is to link
-    linkfiles(f, buf, objfiles, externalToLink)
+    linkfiles(f, buf, objfiles)
 
     lit "],\L\"linkcmd\": "
     str getLinkCmd(projectfile, objfiles)

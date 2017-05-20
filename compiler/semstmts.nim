@@ -71,27 +71,29 @@ proc toCover(t: PType): BiggestInt =
   else:
     result = lengthOrd(skipTypes(t, abstractVar-{tyTypeDesc}))
 
-proc performProcvarCheck(c: PContext, info: TLineInfo, s: PSym) =
-  ## Checks that the given symbol is a proper procedure variable, meaning
-  ## that it
-  var smoduleId = getModule(s).id
-  if sfProcvar notin s.flags and s.typ.callConv == ccDefault and
-      smoduleId != c.module.id:
-    block outer:
-      for module in c.friendModules:
-        if smoduleId == module.id:
-          break outer
-      localError(info, errXCannotBePassedToProcVar, s.name.s)
+when false:
+  proc performProcvarCheck(c: PContext, info: TLineInfo, s: PSym) =
+    ## Checks that the given symbol is a proper procedure variable, meaning
+    ## that it
+    var smoduleId = getModule(s).id
+    if sfProcvar notin s.flags and s.typ.callConv == ccDefault and
+        smoduleId != c.module.id:
+      block outer:
+        for module in c.friendModules:
+          if smoduleId == module.id:
+            break outer
+        localError(info, errXCannotBePassedToProcVar, s.name.s)
 
-proc semProcvarCheck(c: PContext, n: PNode) =
-  var n = n.skipConv
-  if n.kind in nkSymChoices:
-    for x in n:
-      if x.sym.kind in {skProc, skMethod, skConverter, skIterator}:
-        performProcvarCheck(c, n.info, x.sym)
-  elif n.kind == nkSym and n.sym.kind in {skProc, skMethod, skConverter,
-                                        skIterator}:
-    performProcvarCheck(c, n.info, n.sym)
+template semProcvarCheck(c: PContext, n: PNode) =
+  when false:
+    var n = n.skipConv
+    if n.kind in nkSymChoices:
+      for x in n:
+        if x.sym.kind in {skProc, skMethod, skConverter, skIterator}:
+          performProcvarCheck(c, n.info, x.sym)
+    elif n.kind == nkSym and n.sym.kind in {skProc, skMethod, skConverter,
+                                          skIterator}:
+      performProcvarCheck(c, n.info, n.sym)
 
 proc semProc(c: PContext, n: PNode): PNode
 
@@ -160,10 +162,11 @@ proc discardCheck(c: PContext, result: PNode) =
       else:
         var n = result
         while n.kind in skipForDiscardable: n = n.lastSon
+        var s = "expression '" & $n & "' is of type '" &
+            result.typ.typeToString & "' and has to be discarded"
         if result.typ.kind == tyProc:
-          localError(n.info, "value of type '" & result.typ.typeToString & "' has to be discarded; for a function call use ()")
-        else:
-          localError(n.info, errDiscardValueX, result.typ.typeToString)
+          s.add "; for a function call use ()"
+        localError(n.info,  s)
 
 proc semIf(c: PContext, n: PNode): PNode =
   result = n
@@ -204,13 +207,12 @@ proc semCase(c: PContext, n: PNode): PNode =
   var covered: BiggestInt = 0
   var typ = commonTypeBegin
   var hasElse = false
-  var notOrdinal = false
   let caseTyp = skipTypes(n.sons[0].typ, abstractVarRange-{tyTypeDesc})
   case caseTyp.kind
   of tyInt..tyInt64, tyChar, tyEnum, tyUInt..tyUInt32, tyBool:
     chckCovered = true
   of tyFloat..tyFloat128, tyString, tyError:
-    notOrdinal = true
+    discard
   else:
     localError(n.info, errSelectorMustBeOfCertainTypes)
     return
@@ -243,9 +245,6 @@ proc semCase(c: PContext, n: PNode): PNode =
       hasElse = true
     else:
       illFormedAst(x)
-  if notOrdinal and not hasElse:
-    message(n.info, warnDeprecated,
-            "use 'else: discard'; non-ordinal case without 'else'")
   if chckCovered:
     if covered == toCover(n.sons[0].typ):
       hasElse = true
@@ -500,6 +499,8 @@ proc semVarOrLet(c: PContext, n: PNode, symkind: TSymKind): PNode =
           #changeType(def.skipConv, typ, check=true)
       else:
         typ = skipIntLit(def.typ)
+        if typ.kind in tyUserTypeClasses and typ.isResolvedUserTypeClass:
+          typ = typ.lastSon
         if hasEmpty(typ):
           localError(def.info, errCannotInferTypeOfTheLiteral,
                      ($typ.kind).substr(2).toLowerAscii)
@@ -729,7 +730,9 @@ proc typeSectionLeftSidePass(c: PContext, n: PNode) =
     var s: PSym
     if name.kind == nkDotExpr:
       s = qualifiedLookUp(c, name, {checkUndeclared, checkModule})
-      if s.kind != skType or s.typ.skipTypes(abstractPtrs).kind != tyObject or tfPartial notin s.typ.skipTypes(abstractPtrs).flags:
+      if s.kind != skType or
+         s.typ.skipTypes(abstractPtrs).kind != tyObject or
+         tfPartial notin s.typ.skipTypes(abstractPtrs).flags:
         localError(name.info, "only .partial objects can be extended")
     else:
       s = semIdentDef(c, name, skType)
@@ -740,6 +743,87 @@ proc typeSectionLeftSidePass(c: PContext, n: PNode) =
       # add it here, so that recursive types are possible:
       if sfGenSym notin s.flags: addInterfaceDecl(c, s)
     a.sons[0] = newSymNode(s)
+
+proc checkCovariantParamsUsages(genericType: PType) =
+  var body = genericType{-1}
+
+  proc traverseSubTypes(t: PType): bool =
+    template error(msg) = localError(genericType.sym.info, msg)
+
+    result = false
+
+    template subresult(r) =
+      let sub = r
+      result = result or sub
+
+    case t.kind
+    of tyGenericParam:
+      t.flags.incl tfWeakCovariant
+      return true
+
+    of tyObject:
+      for field in t.n:
+        subresult traverseSubTypes(field.typ)
+
+    of tyArray:
+      return traverseSubTypes(t[1])
+
+    of tyProc:
+      for subType in t.sons:
+        if subType != nil:
+          subresult traverseSubTypes(subType)
+      if result:
+        error("non-invariant type param used in a proc type: " &  $t)
+
+    of tySequence:
+      return traverseSubTypes(t[0])
+
+    of tyGenericInvocation:
+      let targetBody = t[0]
+      for i in 1 .. <t.len:
+        let param = t[i]
+        if param.kind == tyGenericParam:
+          if tfCovariant in param.flags:
+            let formalFlags = targetBody[i-1].flags
+            if tfCovariant notin formalFlags:
+              error("covariant param '" & param.sym.name.s &
+                    "' used in a non-covariant position")
+            elif tfWeakCovariant in formalFlags:
+              param.flags.incl tfWeakCovariant
+            result = true
+          elif tfContravariant in param.flags:
+            let formalParam = targetBody[i-1].sym
+            if tfContravariant notin formalParam.typ.flags:
+              error("contravariant param '" & param.sym.name.s &
+                    "' used in a non-contravariant position")
+            result = true
+        else:
+          subresult traverseSubTypes(param)
+
+    of tyAnd, tyOr, tyNot, tyStatic, tyBuiltInTypeClass, tyCompositeTypeClass:
+      error("non-invariant type parameters cannot be used with types such '" & $t & "'")
+
+    of tyUserTypeClass, tyUserTypeClassInst:
+      error("non-invariant type parameters are not supported in concepts")
+
+    of tyTuple:
+      for fieldType in t.sons:
+        subresult traverseSubTypes(fieldType)
+
+    of tyPtr, tyRef, tyVar:
+      if t.base.kind == tyGenericParam: return true
+      return traverseSubTypes(t.base)
+
+    of tyDistinct, tyAlias:
+      return traverseSubTypes(t.lastSon)
+
+    of tyGenericInst:
+      internalAssert false
+
+    else:
+      discard
+
+  discard traverseSubTypes(body)
 
 proc typeSectionRightSidePass(c: PContext, n: PNode) =
   for i in countup(0, sonsLen(n) - 1):
@@ -781,6 +865,22 @@ proc typeSectionRightSidePass(c: PContext, n: PNode) =
         body.sym = s
         body.size = -1 # could not be computed properly
         s.typ.sons[sonsLen(s.typ) - 1] = body
+        if tfCovariant in s.typ.flags:
+          checkCovariantParamsUsages(s.typ)
+          # XXX: This is a temporary limitation:
+          # The codegen currently produces various failures with
+          # generic imported types that have fields, but we need
+          # the fields specified in order to detect weak covariance.
+          # The proper solution is to teach the codegen how to handle
+          # such types, because this would offer various interesting
+          # possibilities such as instantiating C++ generic types with
+          # garbage collected Nim types.
+          if sfImportc in s.flags:
+            var body = s.typ.lastSon
+            if body.kind == tyObject:
+              # erases all declared fields
+              body.n.sons = nil
+
       popOwner(c)
       closeScope(c)
     elif a.sons[2].kind != nkEmpty:
@@ -850,9 +950,12 @@ proc typeSectionFinalPass(c: PContext, n: PNode) =
         # type aliases are hard:
         var t = semTypeNode(c, x, nil)
         assert t != nil
-        if t.kind in {tyObject, tyEnum, tyDistinct}:
-          assert s.typ != nil
-          if s.typ.kind != tyAlias:
+        if s.typ != nil and s.typ.kind != tyAlias:
+          if t.kind in {tyProc, tyGenericInst} and not t.isMetaType:
+            assignType(s.typ, t)
+            s.typ.id = t.id
+          elif t.kind in {tyObject, tyEnum, tyDistinct}:
+            assert s.typ != nil
             assignType(s.typ, t)
             s.typ.id = t.id     # same id
       checkConstructedType(s.info, s.typ)
@@ -981,6 +1084,9 @@ proc semProcAnnotation(c: PContext, prc: PNode;
     var x = newNodeI(nkCall, n.info)
     x.add(newSymNode(m))
     prc.sons[pragmasPos] = copyExcept(n, i)
+    if prc[pragmasPos].kind != nkEmpty and prc[pragmasPos].len == 0:
+      prc.sons[pragmasPos] = emptyNode
+
     if it.kind == nkExprColonExpr:
       # pass pragma argument to the macro too:
       x.add(it.sons[1])
@@ -1061,13 +1167,6 @@ proc semLambda(c: PContext, n: PNode, flags: TExprFlags): PNode =
   closeScope(c)           # close scope for parameters
   popOwner(c)
   result.typ = s.typ
-
-proc semDo(c: PContext, n: PNode, flags: TExprFlags): PNode =
-  # 'do' without params produces a stmt:
-  if n[genericParamsPos].kind == nkEmpty and n[paramsPos].kind == nkEmpty:
-    result = semStmt(c, n[bodyPos])
-  else:
-    result = semLambda(c, n, flags)
 
 proc semInferredLambda(c: PContext, pt: TIdTable, n: PNode): PNode =
   var n = n
@@ -1173,7 +1272,8 @@ proc semOverride(c: PContext, s: PSym, n: PNode) =
       var objB = t.sons[2]
       while true:
         if objB.kind == tyGenericBody: objB = objB.lastSon
-        elif objB.kind == tyGenericInvocation: objB = objB.sons[0]
+        elif objB.kind in {tyGenericInvocation, tyGenericInst}:
+          objB = objB.sons[0]
         else: break
       if obj.kind in {tyObject, tyDistinct} and sameType(obj, objB):
         if obj.assignment.isNil:
@@ -1324,8 +1424,16 @@ proc semProcAux(c: PContext, n: PNode, kind: TSymKind,
       implicitPragmas(c, s, n, validPragmas)
   else:
     if n.sons[pragmasPos].kind != nkEmpty:
-      localError(n.sons[pragmasPos].info, errPragmaOnlyInHeaderOfProcX,
-        "'" & proto.name.s & "' from " & $proto.info)
+      pragma(c, s, n.sons[pragmasPos], validPragmas)
+      # To ease macro generation that produce forwarded .async procs we now
+      # allow a bit redudancy in the pragma declarations. The rule is
+      # a prototype's pragma list must be a superset of the current pragma
+      # list.
+      # XXX This needs more checks eventually, for example that external
+      # linking names do agree:
+      if proto.typ.callConv != s.typ.callConv or proto.typ.flags < s.typ.flags:
+        localError(n.sons[pragmasPos].info, errPragmaOnlyInHeaderOfProcX,
+          "'" & proto.name.s & "' from " & $proto.info)
     if sfForward notin proto.flags:
       wrongRedefinition(n.info, proto.name.s)
     excl(proto.flags, sfForward)
@@ -1553,6 +1661,16 @@ proc usesResult(n: PNode): bool =
       for c in n:
         if usesResult(c): return true
 
+proc inferConceptStaticParam(c: PContext, inferred, n: PNode) =
+  var typ = inferred.typ
+  let res = semConstExpr(c, n)
+  if not sameType(res.typ, typ.base):
+    localError(n.info,
+      "cannot infer the concept parameter '%s', due to a type mismatch. " &
+      "attempt to equate '%s' and '%s'.",
+      [inferred.renderTree, $res.typ, $typ.base])
+  typ.n = res
+
 proc semStmtList(c: PContext, n: PNode, flags: TExprFlags): PNode =
   # these must be last statements in a block:
   const
@@ -1604,10 +1722,21 @@ proc semStmtList(c: PContext, n: PNode, flags: TExprFlags): PNode =
       n.typ = n.sons[i].typ
       return
     else:
-      n.sons[i] = semExpr(c, n.sons[i])
-      if c.inTypeClass > 0 and n[i].typ != nil:
-        case n[i].typ.kind
+      var expr = semExpr(c, n.sons[i], flags)
+      n.sons[i] = expr
+      if c.inTypeClass > 0 and expr.typ != nil:
+        case expr.typ.kind
         of tyBool:
+          if expr.kind == nkInfix and
+             expr[0].kind == nkSym and
+             expr[0].sym.name.s == "==":
+            if expr[1].typ.isUnresolvedStatic:
+              inferConceptStaticParam(c, expr[1], expr[2])
+              continue
+            elif expr[2].typ.isUnresolvedStatic:
+              inferConceptStaticParam(c, expr[2], expr[1])
+              continue
+
           let verdict = semConstExpr(c, n[i])
           if verdict.intVal == 0:
             localError(result.info, "type class predicate failed")
@@ -1631,8 +1760,16 @@ proc semStmtList(c: PContext, n: PNode, flags: TExprFlags): PNode =
           of nkPragma, nkCommentStmt, nkNilLit, nkEmpty: discard
           else: localError(n.sons[j].info, errStmtInvalidAfterReturn)
       else: discard
-  if result.len == 1 and result.sons[0].kind != nkDefer:
+
+  if result.len == 1 and
+     # concept bodies should be preserved as a stmt list:
+     c.inTypeClass == 0 and
+     # also, don't make life complicated for macros.
+     # they will always expect a proper stmtlist:
+     nfBlockArg notin n.flags and
+     result.sons[0].kind != nkDefer:
     result = result.sons[0]
+
   when defined(nimfix):
     if result.kind == nkCommentStmt and not result.comment.isNil and
         not (result.comment[0] == '#' and result.comment[1] == '#'):

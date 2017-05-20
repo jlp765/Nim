@@ -49,12 +49,24 @@ type
   cstring* {.magic: Cstring.} ## built-in cstring (*compatible string*) type
   pointer* {.magic: Pointer.} ## built-in pointer type, use the ``addr``
                               ## operator to get a pointer to a variable
+
+  typedesc* {.magic: TypeDesc.} ## meta type to denote a type description
+
 const
   on* = true    ## alias for ``true``
   off* = false  ## alias for ``false``
 
 {.push warning[GcMem]: off, warning[Uninit]: off.}
 {.push hints: off.}
+
+proc `or` *(a, b: typedesc): typedesc {.magic: "TypeTrait", noSideEffect.}
+  ## Constructs an `or` meta class
+
+proc `and` *(a, b: typedesc): typedesc {.magic: "TypeTrait", noSideEffect.}
+  ## Constructs an `and` meta class
+
+proc `not` *(a: typedesc): typedesc {.magic: "TypeTrait", noSideEffect.}
+  ## Constructs an `not` meta class
 
 type
   Ordinal* {.magic: Ordinal.}[T] ## Generic ordinal type. Includes integer,
@@ -66,11 +78,11 @@ type
   `ref`* {.magic: Pointer.}[T] ## built-in generic traced pointer type
 
   `nil` {.magic: "Nil".}
+
   expr* {.magic: Expr, deprecated.} ## meta type to denote an expression (for templates)
-                        ## **Deprecated** since version 0.15. Use ``untyped`` instead.
+    ## **Deprecated** since version 0.15. Use ``untyped`` instead.
   stmt* {.magic: Stmt, deprecated.} ## meta type to denote a statement (for templates)
     ## **Deprecated** since version 0.15. Use ``typed`` instead.
-  typedesc* {.magic: TypeDesc.} ## meta type to denote a type description
   void* {.magic: "VoidType".}   ## meta type to denote the absence of any type
   auto* {.magic: Expr.} ## meta type for automatic type determination
   any* = distinct auto ## meta type for any supported type
@@ -154,9 +166,13 @@ proc `addr`*[T](x: var T): ptr T {.magic: "Addr", noSideEffect.} =
   discard
 
 proc unsafeAddr*[T](x: T): ptr T {.magic: "Addr", noSideEffect.} =
-  ## Builtin 'addr' operator for taking the address of a memory location.
-  ## This works even for ``let`` variables or parameters for better interop
-  ## with C and so it is considered even more unsafe than the ordinary ``addr``.
+  ## Builtin 'addr' operator for taking the address of a memory
+  ## location.  This works even for ``let`` variables or parameters
+  ## for better interop with C and so it is considered even more
+  ## unsafe than the ordinary ``addr``.  When you use it to write a
+  ## wrapper for a C library, you should always check that the
+  ## original library does never write to data behind the pointer that
+  ## is returned from this procedure.
   ## Cannot be overloaded.
   discard
 
@@ -554,6 +570,10 @@ type
     ## Raised if it is attempted to send a message to a dead thread.
     ##
     ## See the full `exception hierarchy <manual.html#exception-handling-exception-hierarchy>`_.
+  NilAccessError* = object of SystemError ## \
+    ## Raised on dereferences of ``nil`` pointers.
+    ##
+    ## This is only raised if the ``segfaults.nim`` module was imported!
 
 {.deprecated: [TObject: RootObj, PObject: RootRef, TEffect: RootEffect,
   FTime: TimeEffect, FIO: IOEffect, FReadIO: ReadIOEffect,
@@ -1324,6 +1344,7 @@ const
   hasThreadSupport = compileOption("threads") and not defined(nimscript)
   hasSharedHeap = defined(boehmgc) or defined(gogc) # don't share heaps; every thread has its own
   taintMode = compileOption("taintmode")
+  nimEnableCovariance* = defined(nimEnableCovariance) # or true
 
 when hasThreadSupport and defined(tcc) and not compileOption("tlsEmulation"):
   # tcc doesn't support TLS
@@ -1376,25 +1397,34 @@ var programResult* {.exportc: "nim_program_result".}: int
   ## under normal circumstances. When the program is terminated
   ## prematurely using ``quit``, this value is ignored.
 
-proc quit*(errorcode: int = QuitSuccess) {.
-  magic: "Exit", importc: "exit", header: "<stdlib.h>", noreturn.}
-  ## Stops the program immediately with an exit code.
-  ##
-  ## Before stopping the program the "quit procedures" are called in the
-  ## opposite order they were added with `addQuitProc <#addQuitProc>`_.
-  ## ``quit`` never returns and ignores any exception that may have been raised
-  ## by the quit procedures.  It does *not* call the garbage collector to free
-  ## all the memory, unless a quit procedure calls `GC_fullCollect
-  ## <#GC_fullCollect>`_.
-  ##
-  ## The proc ``quit(QuitSuccess)`` is called implicitly when your nim
-  ## program finishes without incident. A raised unhandled exception is
-  ## equivalent to calling ``quit(QuitFailure)``.
-  ##
-  ## Note that this is a *runtime* call and using ``quit`` inside a macro won't
-  ## have any compile time effect. If you need to stop the compiler inside a
-  ## macro, use the `error <manual.html#error-pragma>`_ or `fatal
-  ## <manual.html#fatal-pragma>`_ pragmas.
+when defined(nimdoc):
+  proc quit*(errorcode: int = QuitSuccess) {.magic: "Exit", noreturn.}
+    ## Stops the program immediately with an exit code.
+    ##
+    ## Before stopping the program the "quit procedures" are called in the
+    ## opposite order they were added with `addQuitProc <#addQuitProc>`_.
+    ## ``quit`` never returns and ignores any exception that may have been raised
+    ## by the quit procedures.  It does *not* call the garbage collector to free
+    ## all the memory, unless a quit procedure calls `GC_fullCollect
+    ## <#GC_fullCollect>`_.
+    ##
+    ## The proc ``quit(QuitSuccess)`` is called implicitly when your nim
+    ## program finishes without incident. A raised unhandled exception is
+    ## equivalent to calling ``quit(QuitFailure)``.
+    ##
+    ## Note that this is a *runtime* call and using ``quit`` inside a macro won't
+    ## have any compile time effect. If you need to stop the compiler inside a
+    ## macro, use the `error <manual.html#error-pragma>`_ or `fatal
+    ## <manual.html#fatal-pragma>`_ pragmas.
+
+
+elif defined(genode):
+  proc quit*(errorcode: int = QuitSuccess) {.magic: "Exit", noreturn,
+    importcpp: "genodeEnv->parent().exit(@)", header: "<base/env.h>".}
+
+else:
+  proc quit*(errorcode: int = QuitSuccess) {.
+    magic: "Exit", importc: "exit", header: "<stdlib.h>", noreturn.}
 
 template sysAssert(cond: bool, msg: string) =
   when defined(useSysAssert):
@@ -1862,10 +1892,10 @@ const
   NimMajor*: int = 0
     ## is the major number of Nim's version.
 
-  NimMinor*: int = 16
+  NimMinor*: int = 17
     ## is the minor number of Nim's version.
 
-  NimPatch*: int = 1
+  NimPatch*: int = 0
     ## is the patch number of Nim's version.
 
   NimVersion*: string = $NimMajor & "." & $NimMinor & "." & $NimPatch
@@ -1969,7 +1999,7 @@ proc min*(x, y: int64): int64 {.magic: "MinI", noSideEffect.} =
   ## The minimum value of two integers.
   if x <= y: x else: y
 
-proc min*[T](x: varargs[T]): T =
+proc min*[T](x: openArray[T]): T =
   ## The minimum value of `x`. ``T`` needs to have a ``<`` operator.
   result = x[0]
   for i in 1..high(x):
@@ -1987,7 +2017,7 @@ proc max*(x, y: int64): int64 {.magic: "MaxI", noSideEffect.} =
   ## The maximum value of two integers.
   if y <= x: x else: y
 
-proc max*[T](x: varargs[T]): T =
+proc max*[T](x: openArray[T]): T =
   ## The maximum value of `x`. ``T`` needs to have a ``<`` operator.
   result = x[0]
   for i in 1..high(x):
@@ -1998,6 +2028,12 @@ proc abs*(x: float): float {.magic: "AbsF64", noSideEffect.} =
 proc min*(x, y: float): float {.magic: "MinF64", noSideEffect.} =
   if x <= y: x else: y
 proc max*(x, y: float): float {.magic: "MaxF64", noSideEffect.} =
+  if y <= x: x else: y
+
+proc min*[T](x, y: T): T =
+  if x <= y: x else: y
+
+proc max*[T](x, y: T): T =
   if y <= x: x else: y
 {.pop.}
 
@@ -2463,8 +2499,8 @@ template accumulateResult*(iter: untyped) =
 const NimStackTrace = compileOption("stacktrace")
 
 template coroutinesSupportedPlatform(): bool =
-  when defined(sparc) or defined(ELATE) or compileOption("gc", "v2") or 
-    defined(boehmgc) or defined(gogc) or defined(nogc) or defined(gcStack) or 
+  when defined(sparc) or defined(ELATE) or compileOption("gc", "v2") or
+    defined(boehmgc) or defined(gogc) or defined(nogc) or defined(gcStack) or
     defined(gcMarkAndSweep):
     false
   else:
@@ -3646,7 +3682,7 @@ proc compiles*(x: untyped): bool {.magic: "Compiles", noSideEffect, compileTime.
   ## This can be used to check whether a type supports some operation:
   ##
   ## .. code-block:: Nim
-  ##   when not compiles(3 + 4):
+  ##   when compiles(3 + 4):
   ##     echo "'+' for integers is available"
   discard
 

@@ -279,6 +279,7 @@ proc replStdin(x: ThreadParams) {.thread.} =
     while true:
       let line = readLine(stdin)
       requests.send line
+      if line == "quit": break
       toStdout()
       echo DummyEof
       flushFile(stdout)
@@ -287,6 +288,7 @@ proc replStdin(x: ThreadParams) {.thread.} =
     var line = ""
     while readLineFromStdin("> ", line):
       replStdinSingleCmd(line)
+    requests.send "quit"
 
 proc replCmdline(x: ThreadParams) {.thread.} =
   replStdinSingleCmd(x.address)
@@ -485,6 +487,10 @@ proc mainCommand(graph: ModuleGraph; cache: IdentCache) =
   incl gGlobalOptions, optCaasEnabled
   isServing = true
   wantMainModule()
+
+  if not fileExists(gProjectFull):
+    quit "cannot find file: " & gProjectFull
+
   add(searchPaths, options.libpath)
 
   # do not stop after the first error:
@@ -589,6 +595,8 @@ proc handleCmdLine(cache: IdentCache; config: ConfigRef) =
       raise newException(IOError,
           "Cannot find Nim standard library: Nim compiler not in PATH")
     gPrefixDir = binaryPath.splitPath().head.parentDir()
+    if not dirExists(gPrefixDir / "lib"): gPrefixDir = ""
+
     #msgs.writelnHook = proc (line: string) = log(line)
     myLog("START " & gProjectFull)
 

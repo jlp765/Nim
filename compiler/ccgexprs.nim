@@ -78,8 +78,10 @@ proc genLiteral(p: BProc, n: PNode, ty: PType): Rope =
                         [p.module.tmpBase, rope(id)])
     else:
       result = makeCString(n.strVal)
-  of nkFloatLit..nkFloat64Lit:
+  of nkFloatLit, nkFloat64Lit:
     result = rope(n.floatVal.toStrMaxPrecision)
+  of nkFloat32Lit:
+    result = rope(n.floatVal.toStrMaxPrecision("f"))
   else:
     internalError(n.info, "genLiteral(" & $n.kind & ')')
     result = nil
@@ -267,7 +269,7 @@ proc genAssignment(p: BProc, dest, src: TLoc, flags: TAssignmentFlags) =
     # little HACK to support the new 'var T' as return type:
     linefmt(p, cpsStmts, "$1 = $2;$n", rdLoc(dest), rdLoc(src))
     return
-  let ty = skipTypes(dest.t, abstractRange)
+  let ty = skipTypes(dest.t, abstractRange + tyUserTypeClasses)
   case ty.kind
   of tyRef:
     genRefAssign(p, dest, src, flags)
@@ -756,7 +758,7 @@ proc genRecordField(p: BProc, e: PNode, d: var TLoc) =
   genRecordFieldAux(p, e, d, a)
   var r = rdLoc(a)
   var f = e.sons[1].sym
-  let ty = skipTypes(a.t, abstractInst)
+  let ty = skipTypes(a.t, abstractInst + tyUserTypeClasses)
   if ty.kind == tyTuple:
     # we found a unique tuple type which lacks field information
     # so we use Field$i
@@ -890,7 +892,7 @@ proc genSeqElem(p: BProc, x, y: PNode, d: var TLoc) =
               rfmt(nil, "$1->data[$2]", rdLoc(a), rdCharLoc(b)), a.s)
 
 proc genBracketExpr(p: BProc; n: PNode; d: var TLoc) =
-  var ty = skipTypes(n.sons[0].typ, abstractVarRange)
+  var ty = skipTypes(n.sons[0].typ, abstractVarRange + tyUserTypeClasses)
   if ty.kind in {tyRef, tyPtr}: ty = skipTypes(ty.lastSon, abstractVarRange)
   case ty.kind
   of tyArray: genArrayElem(p, n.sons[0], n.sons[1], d)
@@ -944,7 +946,6 @@ proc genEcho(p: BProc, n: PNode) =
   # this unusal way of implementing it ensures that e.g. ``echo("hallo", 45)``
   # is threadsafe.
   internalAssert n.kind == nkBracket
-  p.module.includeHeader("<stdio.h>")
   var args: Rope = nil
   var a: TLoc
   for i in countup(0, n.len-1):
@@ -953,9 +954,15 @@ proc genEcho(p: BProc, n: PNode) =
     else:
       initLocExpr(p, n.sons[i], a)
       addf(args, ", $1? ($1)->data:\"nil\"", [rdLoc(a)])
-  linefmt(p, cpsStmts, "printf($1$2);$n",
-          makeCString(repeat("%s", n.len) & tnl), args)
-  linefmt(p, cpsStmts, "fflush(stdout);$n")
+  if platform.targetOS == osGenode:
+    # bypass libc and print directly to the Genode LOG session
+    p.module.includeHeader("<base/log.h>")
+    linefmt(p, cpsStmts, """Genode::log(""$1);$n""", args)
+  else:
+    p.module.includeHeader("<stdio.h>")
+    linefmt(p, cpsStmts, "printf($1$2);$n",
+            makeCString(repeat("%s", n.len) & tnl), args)
+    linefmt(p, cpsStmts, "fflush(stdout);$n")
 
 proc gcUsage(n: PNode) =
   if gSelectedGC == gcNone: message(n.info, warnGcMem, n.renderTree)
@@ -1359,7 +1366,7 @@ proc genDollar(p: BProc, n: PNode, d: var TLoc, frmt: string) =
 proc genArrayLen(p: BProc, e: PNode, d: var TLoc, op: TMagic) =
   var a = e.sons[1]
   if a.kind == nkHiddenAddr: a = a.sons[0]
-  let typ = skipTypes(a.typ, abstractVar)
+  var typ = skipTypes(a.typ, abstractVar + tyUserTypeClasses)
   case typ.kind
   of tyOpenArray, tyVarargs:
     if op == mHigh: unaryExpr(p, e, d, "($1Len_0-1)")
@@ -2198,7 +2205,7 @@ proc getNullValueAux(p: BProc; obj, cons: PNode, result: var Rope) =
     let field = obj.sym
     for i in 1..<cons.len:
       if cons[i].kind == nkExprColonExpr:
-        if cons[i][0].sym == field:
+        if cons[i][0].sym.name == field.name:
           result.add genConstExpr(p, cons[i][1])
           return
       elif i == field.position:

@@ -167,6 +167,8 @@ proc mapType(typ: PType): TJSTypeKind =
      tyNone, tyFromExpr, tyForward, tyEmpty, tyFieldAccessor,
      tyExpr, tyStmt, tyTypeDesc, tyTypeClasses, tyVoid, tyAlias:
     result = etyNone
+  of tyInferred:
+    result = mapType(typ.lastSon)
   of tyStatic:
     if t.n != nil: result = mapType(lastSon t)
     else: result = etyNone
@@ -432,22 +434,23 @@ proc binaryExpr(p: PProc, n: PNode, r: var TCompRes, magic, frmt: string) =
 
 proc unsignedTrimmerJS(size: BiggestInt): Rope =
   case size
-    of 1: rope"& 0xff"
-    of 2: rope"& 0xffff"
-    of 4: rope">>> 0"
-    else: rope""
+  of 1: rope"& 0xff"
+  of 2: rope"& 0xffff"
+  of 4: rope">>> 0"
+  else: rope""
 
 proc unsignedTrimmerPHP(size: BiggestInt): Rope =
   case size
-    of 1: rope"& 0xff"
-    of 2: rope"& 0xffff"
-    of 4: rope"& 0xffffffff"
-    else: rope""
+  of 1: rope"& 0xff"
+  of 2: rope"& 0xffff"
+  of 4: rope"& 0xffffffff"
+  else: rope""
 
 template unsignedTrimmer(size: BiggestInt): Rope =
   size.unsignedTrimmerJS | size.unsignedTrimmerPHP
 
-proc binaryUintExpr(p: PProc, n: PNode, r: var TCompRes, op: string, reassign: bool = false) =
+proc binaryUintExpr(p: PProc, n: PNode, r: var TCompRes, op: string,
+                    reassign = false) =
   var x, y: TCompRes
   gen(p, n.sons[1], x)
   gen(p, n.sons[2], y)
@@ -1405,6 +1408,7 @@ proc createObjInitList(p: PProc, typ: PType, excludedFieldIDs: IntSet, output: v
     t = t.sons[0]
 
 proc arrayTypeForElemType(typ: PType): string =
+  # XXX This should also support tyEnum and tyBool
   case typ.kind
   of tyInt, tyInt32: "Int32Array"
   of tyInt16: "Int16Array"
@@ -1637,22 +1641,56 @@ proc genToArray(p: PProc; n: PNode; r: var TCompRes) =
     localError(x.info, "'toArray' needs an array literal")
   r.res.add(")")
 
+proc genReprAux(p: PProc, n: PNode, r: var TCompRes, magic: string, typ: Rope = nil) =
+  useMagic(p, magic)
+  add(r.res, magic & "(")
+  var a: TCompRes
+
+  gen(p, n.sons[1], a)
+  if magic == "reprAny":
+    # the pointer argument in reprAny is expandend to
+    # (pointedto, pointer), so we need to fill it
+    if a.address.isNil:
+      add(r.res, a.res)
+      add(r.res, ", null")
+    else:
+      add(r.res, "$1, $2" % [a.address, a.res])
+  else:
+    add(r.res, a.res)
+
+  if not typ.isNil:
+    add(r.res, ", ")
+    add(r.res, typ)
+  add(r.res, ")")
+
 proc genRepr(p: PProc, n: PNode, r: var TCompRes) =
   if p.target == targetPHP:
     localError(n.info, "'repr' not available for PHP backend")
     return
   let t = skipTypes(n.sons[1].typ, abstractVarRange)
-  case t.kind
-  of tyInt..tyUInt64:
-    unaryExpr(p, n, r, "", "(\"\"+ ($1))")
+  case t.kind:
+  of tyInt..tyInt64, tyUInt..tyUInt64:
+    genReprAux(p, n, r, "reprInt")
+  of tyChar:
+    genReprAux(p, n, r, "reprChar")
+  of tyBool:
+    genReprAux(p, n, r, "reprBool")
+  of tyFloat..tyFloat128:
+    genReprAux(p, n, r, "reprFloat")
+  of tyString:
+    genReprAux(p, n, r, "reprStr")
   of tyEnum, tyOrdinal:
-    gen(p, n.sons[1], r)
-    useMagic(p, "cstrToNimstr")
-    r.kind = resExpr
-    r.res = "cstrToNimstr($1.node.sons[$2].name)" % [genTypeInfo(p, t), r.res]
+    genReprAux(p, n, r, "reprEnum", genTypeInfo(p, t))
+  of tySet:
+    genReprAux(p, n, r, "reprSet", genTypeInfo(p, t))
+  of tyEmpty, tyVoid:
+    localError(n.info, "'repr' doesn't support 'void' type")
+  of tyPointer:
+    genReprAux(p, n, r, "reprPointer")
+  of tyOpenArray, tyVarargs:
+    genReprAux(p, n, r, "reprJSONStringify")
   else:
-    # XXX:
-    internalError(n.info, "genRepr: Not implemented")
+    genReprAux(p, n, r, "reprAny", genTypeInfo(p, t))
 
 proc genOf(p: PProc, n: PNode, r: var TCompRes) =
   var x: TCompRes
@@ -1840,8 +1878,8 @@ proc genMagic(p: PProc, n: PNode, r: var TCompRes) =
 proc genSetConstr(p: PProc, n: PNode, r: var TCompRes) =
   var
     a, b: TCompRes
-  useMagic(p, "SetConstr")
-  r.res = rope("SetConstr(")
+  useMagic(p, "setConstr")
+  r.res = rope("setConstr(")
   r.kind = resExpr
   for i in countup(0, sonsLen(n) - 1):
     if i > 0: add(r.res, ", ")
@@ -1854,6 +1892,12 @@ proc genSetConstr(p: PProc, n: PNode, r: var TCompRes) =
       gen(p, it, a)
       add(r.res, a.res)
   add(r.res, ")")
+  # emit better code for constant sets:
+  if p.target == targetJS and isDeepConstExpr(n):
+    inc(p.g.unique)
+    let tmp = rope("ConstSet") & rope(p.g.unique)
+    addf(p.g.constants, "var $1 = $2;$n", [tmp, r.res])
+    r.res = tmp
 
 proc genArrayConstr(p: PProc, n: PNode, r: var TCompRes) =
   var a: TCompRes
@@ -2105,6 +2149,7 @@ proc gen(p: PProc, n: PNode, r: var TCompRes) =
     else: r.res = rope(f.toStrMaxPrecision)
     r.kind = resExpr
   of nkCallKinds:
+    if isEmptyType(n.typ): genLineDir(p, n)
     if (n.sons[0].kind == nkSym) and (n.sons[0].sym.magic != mNone):
       genMagic(p, n, r)
     elif n.sons[0].kind == nkSym and sfInfixCall in n.sons[0].sym.flags and
@@ -2241,7 +2286,6 @@ proc myProcess(b: PPassContext, n: PNode): PNode =
   genModule(p, n)
   add(p.g.code, p.locals)
   add(p.g.code, p.body)
-  globals.unique = p.unique
 
 proc wholeCode(graph: ModuleGraph; m: BModule): Rope =
   for prc in globals.forwarded:

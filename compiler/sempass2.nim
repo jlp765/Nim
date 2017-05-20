@@ -514,8 +514,18 @@ proc propagateEffects(tracked: PEffects, n: PNode, s: PSym) =
     markSideEffect(tracked, s)
   mergeLockLevels(tracked, n, s.getLockLevel)
 
+proc procVarcheck(n: PNode) =
+  if n.kind in nkSymChoices:
+    for x in n: procVarCheck(x)
+  elif n.kind == nkSym and n.sym.magic != mNone and n.sym.kind in routineKinds:
+    localError(n.info, errXCannotBePassedToProcVar, n.sym.name.s)
+
 proc notNilCheck(tracked: PEffects, n: PNode, paramType: PType) =
   let n = n.skipConv
+  if paramType.isNil or paramType.kind != tyTypeDesc:
+    procVarcheck skipConvAndClosure(n)
+  #elif n.kind in nkSymChoices:
+  #  echo "came here"
   if paramType != nil and tfNotNil in paramType.flags and
       n.typ != nil and tfNotNil notin n.typ.flags:
     if n.kind == nkAddr:
@@ -577,6 +587,9 @@ proc trackOperand(tracked: PEffects, n: PNode, paramType: PType) =
         markGcUnsafe(tracked, a)
       elif tfNoSideEffect notin op.flags:
         markSideEffect(tracked, a)
+  if paramType != nil and paramType.kind == tyVar:
+    if n.kind == nkSym and isLocalVar(tracked, n.sym):
+      makeVolatile(tracked, n.sym)
   notNilCheck(tracked, n, paramType)
 
 proc breaksBlock(n: PNode): bool =
@@ -770,6 +783,10 @@ proc track(tracked: PEffects, n: PNode) =
           notNilCheck(tracked, last, child.sons[i].typ)
       # since 'var (a, b): T = ()' is not even allowed, there is always type
       # inference for (a, b) and thus no nil checking is necessary.
+  of nkConstSection:
+    for child in n:
+      let last = lastSon(child)
+      track(tracked, last)
   of nkCaseStmt: trackCase(tracked, n)
   of nkWhen, nkIfStmt, nkIfExpr: trackIf(tracked, n)
   of nkBlockStmt, nkBlockExpr: trackBlock(tracked, n.sons[1])
@@ -793,7 +810,7 @@ proc track(tracked: PEffects, n: PNode) =
       track(tracked, n.sons[i])
     setLen(tracked.init, oldState)
   of nkObjConstr:
-    track(tracked, n.sons[0])
+    when false: track(tracked, n.sons[0])
     let oldFacts = tracked.guards.len
     for i in 1 .. <len(n):
       let x = n.sons[i]
@@ -820,6 +837,10 @@ proc track(tracked: PEffects, n: PNode) =
   of nkTypeSection, nkProcDef, nkConverterDef, nkMethodDef, nkIteratorDef,
       nkMacroDef, nkTemplateDef, nkLambda, nkDo:
     discard
+  of nkCast, nkHiddenStdConv, nkHiddenSubConv, nkConv:
+    if n.len == 2: track(tracked, n.sons[1])
+  of nkObjUpConv, nkObjDownConv, nkChckRange, nkChckRangeF, nkChckRange64:
+    if n.len == 1: track(tracked, n.sons[0])
   else:
     for i in 0 .. <safeLen(n): track(tracked, n.sons[i])
 

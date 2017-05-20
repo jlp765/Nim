@@ -46,9 +46,21 @@ type
 
   TExprFlag* = enum
     efLValue, efWantIterator, efInTypeof,
-    efWantStmt, efAllowStmt, efDetermineType,
+    efNeedStatic,
+      # Use this in contexts where a static value is mandatory
+    efPreferStatic,
+      # Use this in contexts where a static value could bring more
+      # information, but it's not strictly mandatory. This may become
+      # the default with implicit statics in the future.
+    efPreferNilResult,
+      # Use this if you want a certain result (e.g. static value),
+      # but you don't want to trigger a hard error. For example,
+      # you may be in position to supply a better error message
+      # to the user.
+    efWantStmt, efAllowStmt, efDetermineType, efExplain,
     efAllowDestructor, efWantValue, efOperand, efNoSemCheck,
-    efNoProcvarCheck, efNoEvaluateGeneric, efInCall, efFromHlo
+    efNoProcvarCheck, efNoEvaluateGeneric, efInCall, efFromHlo,
+  
   TExprFlags* = set[TExprFlag]
 
   TTypeAttachedOp* = enum
@@ -84,12 +96,12 @@ type
     libs*: seq[PLib]           # all libs used by this module
     semConstExpr*: proc (c: PContext, n: PNode): PNode {.nimcall.} # for the pragmas
     semExpr*: proc (c: PContext, n: PNode, flags: TExprFlags = {}): PNode {.nimcall.}
-    semTryExpr*: proc (c: PContext, n: PNode,flags: TExprFlags = {}): PNode {.nimcall.}
+    semTryExpr*: proc (c: PContext, n: PNode, flags: TExprFlags = {}): PNode {.nimcall.}
     semTryConstExpr*: proc (c: PContext, n: PNode): PNode {.nimcall.}
     semOperand*: proc (c: PContext, n: PNode, flags: TExprFlags = {}): PNode {.nimcall.}
     semConstBoolExpr*: proc (c: PContext, n: PNode): PNode {.nimcall.} # XXX bite the bullet
     semOverloadedCall*: proc (c: PContext, n, nOrig: PNode,
-                              filter: TSymKinds): PNode {.nimcall.}
+                              filter: TSymKinds, flags: TExprFlags): PNode {.nimcall.}
     semTypeNode*: proc(c: PContext, n: PNode, prev: PType): PType {.nimcall.}
     semInferredLambda*: proc(c: PContext, pt: TIdTable, n: PNode): PNode
     semGenerateInstance*: proc (c: PContext, fn: PSym, pt: TIdTable,
@@ -230,6 +242,17 @@ proc makePtrType*(c: PContext, baseType: PType): PType =
   result = newTypeS(tyPtr, c)
   addSonSkipIntLit(result, baseType.assertNotNil)
 
+proc makeTypeWithModifier*(c: PContext,
+                           modifier: TTypeKind,
+                           baseType: PType): PType =
+  assert modifier in {tyVar, tyPtr, tyRef, tyStatic, tyTypeDesc}
+
+  if modifier in {tyVar, tyTypeDesc} and baseType.kind == modifier:
+    result = baseType
+  else:
+    result = newTypeS(modifier, c)
+    addSonSkipIntLit(result, baseType.assertNotNil)
+
 proc makeVarType*(c: PContext, baseType: PType): PType =
   if baseType.kind == tyVar:
     result = baseType
@@ -238,8 +261,11 @@ proc makeVarType*(c: PContext, baseType: PType): PType =
     addSonSkipIntLit(result, baseType.assertNotNil)
 
 proc makeTypeDesc*(c: PContext, typ: PType): PType =
-  result = newTypeS(tyTypeDesc, c)
-  result.addSonSkipIntLit(typ.assertNotNil)
+  if typ.kind == tyTypeDesc:
+    result = typ
+  else:
+    result = newTypeS(tyTypeDesc, c)
+    result.addSonSkipIntLit(typ.assertNotNil)
 
 proc makeTypeSymNode*(c: PContext, typ: PType, info: TLineInfo): PNode =
   let typedesc = makeTypeDesc(c, typ)
@@ -251,6 +277,10 @@ proc makeTypeFromExpr*(c: PContext, n: PNode): PType =
   assert n != nil
   result.n = n
 
+proc newTypeWithSons2*(kind: TTypeKind, owner: PSym, sons: seq[PType]): PType =
+  result = newType(kind, owner)
+  result.sons = sons
+
 proc newTypeWithSons*(c: PContext, kind: TTypeKind,
                       sons: seq[PType]): PType =
   result = newType(kind, getCurrOwner(c))
@@ -259,7 +289,8 @@ proc newTypeWithSons*(c: PContext, kind: TTypeKind,
 proc makeStaticExpr*(c: PContext, n: PNode): PNode =
   result = newNodeI(nkStaticExpr, n.info)
   result.sons = @[n]
-  result.typ = newTypeWithSons(c, tyStatic, @[n.typ])
+  result.typ = if n.typ != nil and n.typ.kind == tyStatic: n.typ
+               else: newTypeWithSons(c, tyStatic, @[n.typ])
 
 proc makeAndType*(c: PContext, t1, t2: PType): PType =
   result = newTypeS(tyAnd, c)
@@ -303,16 +334,14 @@ proc makeRangeWithStaticExpr*(c: PContext, n: PNode): PType =
   let intType = getSysType(tyInt)
   result = newTypeS(tyRange, c)
   result.sons = @[intType]
+  if n.typ != nil and n.typ.n == nil:
+    result.flags.incl tfUnresolved
   result.n = newNode(nkRange, n.info, @[
     newIntTypeNode(nkIntLit, 0, intType),
     makeStaticExpr(c, n.nMinusOne)])
 
-template rangeHasStaticIf*(t: PType): bool =
-  # this accepts the ranges's node
-  t.n != nil and t.n.len > 1 and t.n[1].kind == nkStaticExpr
-
-template getStaticTypeFromRange*(t: PType): PType =
-  t.n[1][0][1].typ
+template rangeHasUnresolvedStatic*(t: PType): bool =
+  tfUnresolved in t.flags
 
 proc errorType*(c: PContext): PType =
   ## creates a type representing an error state

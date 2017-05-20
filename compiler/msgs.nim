@@ -109,9 +109,11 @@ type
     errXCannotBeClosure, errXMustBeCompileTime,
     errCannotInferTypeOfTheLiteral,
     errCannotInferReturnType,
+    errCannotInferStaticParam,
     errGenericLambdaNotAllowed,
     errProcHasNoConcreteType,
     errCompilerDoesntSupportTarget,
+    errInOutFlagNotExtern,
     errUser,
     warnCannotOpenFile,
     warnOctalEscape, warnXIsNeverRead, warnXmightNotBeenInit,
@@ -132,7 +134,7 @@ type
     hintConditionAlwaysTrue, hintName, hintPattern,
     hintExecuting, hintLinking, hintDependency,
     hintSource, hintStackTrace, hintGCStats,
-    hintUser
+    hintUser, hintUserRaw
 
 const
   MsgKindToStr*: array[TMsgKind, string] = [
@@ -373,11 +375,13 @@ const
     errXMustBeCompileTime: "'$1' can only be used in compile-time context",
     errCannotInferTypeOfTheLiteral: "cannot infer the type of the $1",
     errCannotInferReturnType: "cannot infer the return type of the proc",
+    errCannotInferStaticParam: "cannot infer the value of the static param `$1`",
     errGenericLambdaNotAllowed: "A nested proc can have generic parameters only when " &
                                 "it is used as an operand to another routine and the types " &
                                 "of the generic paramers can be inferred from the expected signature.",
     errProcHasNoConcreteType: "'$1' doesn't have a concrete type, due to unspecified generic parameters.",
     errCompilerDoesntSupportTarget: "The current compiler \'$1\' doesn't support the requested compilation target",
+    errInOutFlagNotExtern: "The `$1` modifier can be used only with imported types",
     errUser: "$1",
     warnCannotOpenFile: "cannot open \'$1\'",
     warnOctalEscape: "octal escape sequences do not exist; leading zero is ignored",
@@ -432,10 +436,11 @@ const
     hintSource: "$1",
     hintStackTrace: "$1",
     hintGCStats: "$1",
-    hintUser: "$1"]
+    hintUser: "$1",
+    hintUserRaw: "$1"]
 
 const
-  WarningsToStr*: array[0..30, string] = ["CannotOpenFile", "OctalEscape",
+  WarningsToStr* = ["CannotOpenFile", "OctalEscape",
     "XIsNeverRead", "XmightNotBeenInit",
     "Deprecated", "ConfigDeprecated",
     "SmallLshouldNotBeUsed", "UnknownMagic",
@@ -447,12 +452,12 @@ const
     "ProveInit", "ProveField", "ProveIndex", "GcUnsafe", "GcUnsafe2", "Uninit",
     "GcMem", "Destructor", "LockLevel", "ResultShadowed", "User"]
 
-  HintsToStr*: array[0..22, string] = ["Success", "SuccessX", "LineTooLong",
+  HintsToStr* = ["Success", "SuccessX", "LineTooLong",
     "XDeclaredButNotUsed", "ConvToBaseNotNeeded", "ConvFromXtoItselfNotNeeded",
     "ExprAlwaysX", "QuitCalled", "Processing", "CodeBegin", "CodeEnd", "Conf",
     "Path", "CondTrue", "Name", "Pattern", "Exec", "Link", "Dependency",
     "Source", "StackTrace", "GCStats",
-    "User"]
+    "User", "UserRaw"]
 
 const
   fatalMin* = errUnknown
@@ -497,7 +502,6 @@ type
   TErrorOutput* = enum
     eStdOut
     eStdErr
-    eInMemory
 
   TErrorOutputs* = set[TErrorOutput]
 
@@ -650,6 +654,12 @@ var
   errorOutputs* = {eStdOut, eStdErr}
   writelnHook*: proc (output: string) {.closure.}
   structuredErrorHook*: proc (info: TLineInfo; msg: string; severity: Severity) {.closure.}
+
+proc concat(strings: openarray[string]): string =
+  var totalLen = 0
+  for s in strings: totalLen += s.len
+  result = newStringOfCap totalLen
+  for s in strings: result.add s
 
 proc suggestWriteln*(s: string) =
   if eStdOut in errorOutputs:
@@ -804,10 +814,7 @@ macro callStyledWriteLineStderr(args: varargs[typed]): untyped =
     result.add(arg)
 
 template callWritelnHook(args: varargs[string, `$`]) =
-  var s = ""
-  for arg in args:
-    s.add arg
-  writelnHook s
+  writelnHook concat(args)
 
 template styledMsgWriteln*(args: varargs[typed]) =
   if not isNil(writelnHook):
@@ -922,7 +929,7 @@ proc rawMessage*(msg: TMsgKind, args: openArray[string]) =
     if msg notin gNotes: return
     title = HintTitle
     color = HintColor
-    kind = HintsToStr[ord(msg) - ord(hintMin)]
+    if msg != hintUserRaw: kind = HintsToStr[ord(msg) - ord(hintMin)]
     inc(gHintCounter)
   let s = msgKindToString(msg) % args
 
@@ -990,7 +997,7 @@ proc liMessage(info: TLineInfo, msg: TMsgKind, arg: string,
     ignoreMsg = optHints notin gOptions or msg notin gNotes
     title = HintTitle
     color = HintColor
-    kind = HintsToStr[ord(msg) - ord(hintMin)]
+    if msg != hintUserRaw: kind = HintsToStr[ord(msg) - ord(hintMin)]
     inc(gHintCounter)
   # NOTE: currently line info line numbers start with 1,
   # but column numbers start with 0, however most editors expect
