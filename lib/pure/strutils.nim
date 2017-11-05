@@ -1308,6 +1308,9 @@ proc abbrev*(s: string, possibilities: openArray[string]): int =
 proc join*(a: openArray[string], sep: string = ""): string {.
   noSideEffect, rtl, extern: "nsuJoinSep".} =
   ## Concatenates all strings in `a` separating them with `sep`.
+  ##
+  ## .. code-block:: nim
+  ##   assert join(@["The","rain","in","Spain"], " ") == "The rain in Spain"
   if len(a) > 0:
     var L = sep.len * (a.len-1)
     for i in 0..high(a): inc(L, a[i].len)
@@ -1358,6 +1361,10 @@ proc find*(a: SkipTable, s, sub: string, start: Natural = 0, last: Natural = 0):
   ## If `last` is unspecified, it defaults to `s.high`.
   ##
   ## Searching is case-sensitive. If `sub` is not in `s`, -1 is returned.
+  ##
+  ## .. code-block:: nim
+  ##   assert find("the needle haystack", "needle") == 4
+  ##   assert find("the haystack", "needle") == -1
   let
     last = if last==0: s.high else: last
     m = len(sub)
@@ -1431,6 +1438,9 @@ proc rfind*(s, sub: string, start: int = -1): int {.noSideEffect.} =
   ## backwards to 0.
   ##
   ## Searching is case-sensitive. If `sub` is not in `s`, -1 is returned.
+  ##
+  ## .. code-block:: nim
+  ##   assert rfind("the stacked haystack", "stack") == 15
   let realStart = if start == -1: s.len else: start
   for i in countdown(realStart-sub.len, 0):
     for j in 0..sub.len-1:
