@@ -1049,6 +1049,12 @@ template spaces*(n: Natural): string = repeat(' ', n)
   ##     text2 = "This is a very long string"
   ##   echo text1 & spaces(max(0, width - text1.len)) & "|"
   ##   echo text2 & spaces(max(0, width - text2.len)) & "|"
+  ##
+  ## Results in:
+  ##
+  ## .. code-block:: nim
+  ##   Hello user!    |
+  ##   This is a very long string|
 
 proc repeatChar*(count: Natural, c: char = ' '): string {.deprecated.} =
   ## deprecated: use repeat() or spaces()
