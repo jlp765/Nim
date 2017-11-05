@@ -916,6 +916,13 @@ proc parseInt*(s: string): int {.noSideEffect, procvar,
   ## Parses a decimal integer value contained in `s`.
   ##
   ## If `s` is not a valid integer, `ValueError` is raised.
+  ##
+  ## .. code-block:: nim
+  ##   var ival = -1
+  ##   try: ival = parseInt("this fails") except: discard
+  ##   assert ival == -1
+  ##   assert parseInt("42") == 42
+
   var L = parseutils.parseInt(s, result, 0)
   if L != s.len or L == 0:
     raise newException(ValueError, "invalid integer: " & s)
